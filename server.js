@@ -12,11 +12,12 @@ const cfg = {
   clientId:     process.env.TWITCH_CLIENT_ID     || '',
   clientSecret: process.env.TWITCH_CLIENT_SECRET || '',
   channel:     (process.env.TWITCH_CHANNEL       || '').toLowerCase(),
-  hostUrl:     (process.env.HOST_URL             || 'http://192.168.1.10:3000').replace(/\/$/, ''),
-  port:         parseInt(process.env.PORT        || '3000', 10),
-  dataDir:      process.env.DATA_DIR             || '/app/data',
+  hostUrl:      (process.env.HOST_URL             || 'http://192.168.1.10:3000').replace(/\/$/, ''),
+  callbackUrl:  (process.env.CALLBACK_URL        || '').replace(/\/$/, ''),
+  port:          parseInt(process.env.PORT       || '3000', 10),
+  dataDir:       process.env.DATA_DIR            || '/app/data',
 };
-cfg.redirectUri = `${cfg.hostUrl}/auth/callback`;
+cfg.redirectUri = cfg.callbackUrl || `${cfg.hostUrl}/auth/callback`;
 
 // ── Token storage ─────────────────────────────────────────────────────────────
 const tokensFile = path.join(cfg.dataDir, 'tokens.json');
