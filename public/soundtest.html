@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Sound Test</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0d0015; color: #e0c3ff; font-family: 'Share Tech Mono', monospace; padding: 40px; }
+    h1 { font-family: 'Orbitron', sans-serif; color: #bf00ff; font-size: 1.2rem; letter-spacing: 4px; margin-bottom: 6px; text-shadow: 0 0 20px #bf00ff; }
+    .sub { color: #7b2fff; font-size: .75rem; letter-spacing: 2px; margin-bottom: 40px; }
+
+    .group { margin-bottom: 36px; max-width: 700px; }
+    .group-label {
+      font-size: .65rem; letter-spacing: 3px; text-transform: uppercase;
+      color: #7b2fff; margin-bottom: 14px; padding-bottom: 8px;
+      border-bottom: 1px solid #2d0066;
+    }
+    .sounds { display: flex; gap: 12px; flex-wrap: wrap; }
+
+    .snd {
+      display: flex; flex-direction: column; gap: 6px;
+      background: #1a0033; border: 1px solid #3d0080; border-radius: 6px;
+      padding: 16px 20px; cursor: pointer; min-width: 180px;
+      transition: border-color .15s, box-shadow .15s;
+      text-align: left;
+    }
+    .snd:hover { border-color: var(--c, #bf00ff); box-shadow: 0 0 15px -4px var(--c, #bf00ff); }
+    .snd:active { opacity: .7; }
+    .snd.playing { border-color: var(--c, #bf00ff); box-shadow: 0 0 20px -3px var(--c, #bf00ff); }
+
+    .snd-name { font-family: 'Orbitron', sans-serif; font-size: .7rem; color: var(--c, #bf00ff); letter-spacing: 1px; }
+    .snd-desc { font-size: .65rem; color: #8866aa; line-height: 1.5; }
+
+    .group:nth-child(1) .snd { --c: #00f5ff; }
+    .group:nth-child(2) .snd { --c: #bf00ff; }
+    .group:nth-child(3) .snd { --c: #ff6b35; }
+    .group:nth-child(4) .snd { --c: #ff2d78; }
+
+    .note { font-size: .65rem; color: #555; margin-top: 40px; }
+  </style>
+</head>
+<body>
+
+<h1>⚡ SOUND TEST</h1>
+<div class="sub">CLICK TO AUDITION — FIND YOUR DIRECTION</div>
+
+<div class="group">
+  <div class="group-label">A — Dark Synthwave</div>
+  <div class="sounds">
+    <div class="snd" onclick="play('synthA')">
+      <div class="snd-name">Hard Filter Stab</div>
+      <div class="snd-desc">Detuned saws, filter sweeps open fast. Punchy, dirty.</div>
+    </div>
+    <div class="snd" onclick="play('synthB')">
+      <div class="snd-name">Chord Stab</div>
+      <div class="snd-desc">Minor chord hit, resonant filter, slow decay ring.</div>
+    </div>
+    <div class="snd" onclick="play('synthC')">
+      <div class="snd-name">Bass Hit + Arp</div>
+      <div class="snd-desc">Heavy sub hit then a fast rising arpeggio.</div>
+    </div>
+  </div>
+</div>
+
+<div class="group">
+  <div class="group-label">B — Cinematic / Blade Runner</div>
+  <div class="sounds">
+    <div class="snd" onclick="play('cinA')">
+      <div class="snd-name">Rising Pad</div>
+      <div class="snd-desc">Slow atmospheric swell. Moody, spacious, ominous.</div>
+    </div>
+    <div class="snd" onclick="play('cinB')">
+      <div class="snd-name">Tension Sting</div>
+      <div class="snd-desc">Deep bass drone + high harmonic shimmer. Cinematic.</div>
+    </div>
+    <div class="snd" onclick="play('cinC')">
+      <div class="snd-name">Warning Pulse</div>
+      <div class="snd-desc">Repeating low pulse that builds in intensity.</div>
+    </div>
+  </div>
+</div>
+
+<div class="group">
+  <div class="group-label">C — Thruster / Sci-Fi</div>
+  <div class="sounds">
+    <div class="snd" onclick="play('thrA')">
+      <div class="snd-name">Engine Whoosh</div>
+      <div class="snd-desc">Noise through a rising filter. Like a ship powering up.</div>
+    </div>
+    <div class="snd" onclick="play('thrB')">
+      <div class="snd-name">Phaser Sweep</div>
+      <div class="snd-desc">Oscillator with LFO wobble. Sci-fi, phasey.</div>
+    </div>
+    <div class="snd" onclick="play('thrC')">
+      <div class="snd-name">Power Charge</div>
+      <div class="snd-desc">Rising pitch sweep + crackle. Energy charging up.</div>
+    </div>
+  </div>
+</div>
+
+<div class="group">
+  <div class="group-label">D — Distorted / Gritty Synth</div>
+  <div class="sounds">
+    <div class="snd" onclick="play('gritA')">
+      <div class="snd-name">Fuzz Stab</div>
+      <div class="snd-desc">Musical note run through heavy fuzz. Like a synth guitar.</div>
+    </div>
+    <div class="snd" onclick="play('gritB')">
+      <div class="snd-name">Glitch Burst</div>
+      <div class="snd-desc">Stuttering distorted square. Broken machine energy.</div>
+    </div>
+    <div class="snd" onclick="play('gritC')">
+      <div class="snd-name">Grind & Ring</div>
+      <div class="snd-desc">Rough sawtooth grind with a clean tone ringing out after.</div>
+    </div>
+  </div>
+</div>
+
+<div class="note">Once you find the style(s) that feel right, tell Claude — he'll build all 6 alert sounds in that direction.</div>
+
+<script>
+let ctx = null;
+function ac() {
+  if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+  if (ctx.state === 'suspended') ctx.resume();
+  return ctx;
+}
+
+function distortCurve(amt) {
+  const n = 512, c = new Float32Array(n);
+  for (let i = 0; i < n; i++) { const x = (i*2)/n-1; c[i] = (Math.PI+amt)*x/(Math.PI+amt*Math.abs(x)); }
+  return c;
+}
+function mkDist(c, amt) {
+  const ws = c.createWaveShaper(); ws.curve = distortCurve(amt); ws.oversample = '4x'; return ws;
+}
+function mkNoise(c, dur) {
+  const buf = c.createBuffer(1, Math.ceil(c.sampleRate*dur), c.sampleRate);
+  const d = buf.getChannelData(0); for (let i=0;i<d.length;i++) d[i]=Math.random()*2-1;
+  const s = c.createBufferSource(); s.buffer = buf; return s;
+}
+function mkComp(c) {
+  const comp = c.createDynamicsCompressor();
+  comp.threshold.value=-3; comp.knee.value=0; comp.ratio.value=20;
+  comp.attack.value=0.001; comp.release.value=0.1;
+  comp.connect(c.destination); return comp;
+}
+
+const PLAYS = {
+
+  // ── A: Dark Synthwave ──────────────────────────────────────────
+
+  synthA() { // Hard filter stab — detuned saws, filter rips open
+    const c = ac(), t = c.currentTime, out = mkComp(c);
+    [-8, 0, 8, 15].forEach(cents => {
+      const osc = c.createOscillator(), g = c.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.value = 110 * Math.pow(2, cents/1200);
+      const filt = c.createBiquadFilter();
+      filt.type = 'lowpass';
+      filt.frequency.setValueAtTime(150, t);
+      filt.frequency.exponentialRampToValueAtTime(3500, t + 0.12);
+      filt.frequency.exponentialRampToValueAtTime(400, t + 1.5);
+      filt.Q.value = 10;
+      g.gain.setValueAtTime(0.001, t);
+      g.gain.linearRampToValueAtTime(0.18, t + 0.01);
+      g.gain.setValueAtTime(0.18, t + 0.08);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 1.6);
+      osc.connect(filt); filt.connect(g); g.connect(out);
+      osc.start(t); osc.stop(t + 1.65);
+    });
+  },
+
+  synthB() { // Minor chord stab — resonant filter, slow ring
+    const c = ac(), t = c.currentTime, out = mkComp(c);
+    [110, 130.8, 164.8, 220].forEach((freq, i) => { // Am chord
+      const osc = c.createOscillator(), g = c.createGain();
+      osc.type = 'sawtooth'; osc.frequency.value = freq;
+      const filt = c.createBiquadFilter();
+      filt.type = 'lowpass';
+      filt.frequency.setValueAtTime(300, t);
+      filt.frequency.exponentialRampToValueAtTime(2000, t + 0.08);
+      filt.frequency.exponentialRampToValueAtTime(600, t + 2.0);
+      filt.Q.value = 8;
+      g.gain.setValueAtTime(0.001, t + i*0.01);
+      g.gain.linearRampToValueAtTime(0.15, t + i*0.01 + 0.015);
+      g.gain.setValueAtTime(0.15, t + 0.1);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 2.2);
+      osc.connect(filt); filt.connect(g); g.connect(out);
+      osc.start(t + i*0.01); osc.stop(t + 2.25);
+    });
+  },
+
+  synthC() { // Sub hit + rising arpeggio
+    const c = ac(), t = c.currentTime, out = mkComp(c);
+    // Sub hit
+    const sub = c.createOscillator(), subG = c.createGain();
+    sub.type = 'sine'; sub.frequency.setValueAtTime(80,t); sub.frequency.exponentialRampToValueAtTime(40,t+0.4);
+    subG.gain.setValueAtTime(0.001,t); subG.gain.linearRampToValueAtTime(0.8,t+0.015); subG.gain.exponentialRampToValueAtTime(0.001,t+0.5);
+    sub.connect(subG); subG.connect(out); sub.start(t); sub.stop(t+0.55);
+    // Arp
+    [110,138.6,164.8,220,277.2,329.6].forEach((freq,i) => {
+      const osc = c.createOscillator(), g = c.createGain();
+      osc.type = 'sawtooth'; osc.frequency.value = freq;
+      const filt = c.createBiquadFilter(); filt.type='lowpass'; filt.frequency.value=2000; filt.Q.value=4;
+      const d = 0.05 + i*0.1;
+      g.gain.setValueAtTime(0.001,t+d); g.gain.linearRampToValueAtTime(0.2,t+d+0.02);
+      g.gain.exponentialRampToValueAtTime(0.001,t+d+0.25);
+      osc.connect(filt); filt.connect(g); g.connect(out);
+      osc.start(t+d); osc.stop(t+d+0.3);
+    });
+  },
+
+  // ── B: Cinematic / Blade Runner ───────────────────────────────
+
+  cinA() { // Rising atmospheric pad
+    const c = ac(), t = c.currentTime, out = mkComp(c);
+    [[55,0],[82.4,0.3],[110,0.5],[164.8,0.8]].forEach(([freq,d]) => {
+      const osc = c.createOscillator(), g = c.createGain();
+      osc.type = 'sine'; osc.frequency.value = freq;
+      // Slow vibrato
+      const lfo = c.createOscillator(), lfoG = c.createGain();
+      lfo.frequency.value = 4; lfoG.gain.value = freq * 0.003;
+      lfo.connect(lfoG); lfoG.connect(osc.frequency);
+      g.gain.setValueAtTime(0.001, t+d);
+      g.gain.linearRampToValueAtTime(0.2, t+d+0.8);
+      g.gain.setValueAtTime(0.2, t+2.5);
+      g.gain.exponentialRampToValueAtTime(0.001, t+3.5);
+      osc.connect(g); g.connect(out);
+      osc.start(t+d); osc.stop(t+3.6);
+      lfo.start(t+d); lfo.stop(t+3.6);
+    });
+  },
+
+  cinB() { // Deep drone + high shimmer
+    const c = ac(), t = c.currentTime, out = mkComp(c);
+    // Deep drone
+    const drone = c.createOscillator(), dG = c.createGain();
+    drone.type = 'sine'; drone.frequency.value = 55;
+    dG.gain.setValueAtTime(0.001,t); dG.gain.linearRampToValueAtTime(0.5,t+0.3);
+    dG.gain.setValueAtTime(0.5,t+2); dG.gain.exponentialRampToValueAtTime(0.001,t+3.5);
+    drone.connect(dG); dG.connect(out); drone.start(t); drone.stop(t+3.6);
+    // High shimmer — FM
+    const mod = c.createOscillator(), modG = c.createGain();
+    const car = c.createOscillator(), cG = c.createGain();
+    mod.frequency.value = 880; modG.gain.setValueAtTime(0,t+0.5); modG.gain.linearRampToValueAtTime(600,t+1.5);
+    mod.connect(modG); modG.connect(car.frequency);
+    car.type='sine'; car.frequency.value=1760;
+    cG.gain.setValueAtTime(0.001,t+0.5); cG.gain.linearRampToValueAtTime(0.12,t+1.2);
+    cG.gain.setValueAtTime(0.12,t+2.5); cG.gain.exponentialRampToValueAtTime(0.001,t+3.5);
+    car.connect(cG); cG.connect(out);
+    mod.start(t+0.5); mod.stop(t+3.6); car.start(t+0.5); car.stop(t+3.6);
+  },
+
+  cinC() { // Warning pulse — repeating low thud that builds
+    const c = ac(), t = c.currentTime, out = mkComp(c);
+    for (let i=0; i<5; i++) {
+      const d = i * 0.55;
+      const osc = c.createOscillator(), g = c.createGain();
+      osc.type='sine'; osc.frequency.setValueAtTime(80,t+d); osc.frequency.exponentialRampToValueAtTime(40,t+d+0.3);
+      const vol = 0.3 + i*0.12;
+      g.gain.setValueAtTime(0.001,t+d); g.gain.linearRampToValueAtTime(vol,t+d+0.01);
+      g.gain.exponentialRampToValueAtTime(0.001,t+d+0.45);
+      osc.connect(g); g.connect(out); osc.start(t+d); osc.stop(t+d+0.5);
+    }
+  },
+
+  // ── C: Thruster / Sci-Fi ───────────────────────────────────────
+
+  thrA() { // Engine whoosh — noise through rising filter
+    const c = ac(), t = c.currentTime, out = mkComp(c);
+    const ns = mkNoise(c, 2.5);
+    const lp = c.createBiquadFilter(); lp.type='lowpass';
+    lp.frequency.setValueAtTime(80,t); lp.frequency.exponentialRampToValueAtTime(4000,t+1.5);
+    lp.frequency.exponentialRampToValueAtTime(600,t+2.5);
+    lp.Q.value = 3;
+    const g = c.createGain();
+    g.gain.setValueAtTime(0.001,t); g.gain.linearRampToValueAtTime(0.4,t+0.3);
+    g.gain.setValueAtTime(0.4,t+1.5); g.gain.exponentialRampToValueAtTime(0.001,t+2.5);
+    ns.connect(lp); lp.connect(g); g.connect(out);
+    ns.start(t); ns.stop(t+2.55);
+  },
+
+  thrB() { // Phaser sweep — oscillator with LFO on filter
+    const c = ac(), t = c.currentTime, out = mkComp(c);
+    [55,110,220].forEach(freq => {
+      const osc = c.createOscillator(), g = c.createGain();
+      osc.type = 'sawtooth'; osc.frequency.value = freq;
+      const filt = c.createBiquadFilter(); filt.type='bandpass'; filt.Q.value=8;
+      // LFO sweeps filter frequency
+      const lfo = c.createOscillator(), lfoG = c.createGain();
+      lfo.frequency.value = 1.5; lfoG.gain.value = 600;
+      lfo.connect(lfoG); lfoG.connect(filt.frequency);
+      filt.frequency.value = 800;
+      g.gain.setValueAtTime(0.001,t); g.gain.linearRampToValueAtTime(0.18,t+0.1);
+      g.gain.setValueAtTime(0.18,t+2.0); g.gain.exponentialRampToValueAtTime(0.001,t+3.0);
+      osc.connect(filt); filt.connect(g); g.connect(out);
+      osc.start(t); osc.stop(t+3.05);
+      lfo.start(t); lfo.stop(t+3.05);
+    });
+  },
+
+  thrC() { // Power charge — rising pitch sweep + static crackle
+    const c = ac(), t = c.currentTime, out = mkComp(c);
+    // Rising tone
+    const osc = c.createOscillator(), g = c.createGain();
+    osc.type='sawtooth';
+    osc.frequency.setValueAtTime(40,t); osc.frequency.exponentialRampToValueAtTime(2400,t+1.8);
+    const filt = c.createBiquadFilter(); filt.type='lowpass';
+    filt.frequency.setValueAtTime(100,t); filt.frequency.exponentialRampToValueAtTime(8000,t+1.8);
+    g.gain.setValueAtTime(0.001,t); g.gain.linearRampToValueAtTime(0.3,t+0.05);
+    g.gain.setValueAtTime(0.3,t+1.6); g.gain.exponentialRampToValueAtTime(0.001,t+1.9);
+    osc.connect(filt); filt.connect(g); g.connect(out); osc.start(t); osc.stop(t+1.95);
+    // Static crackle at end
+    const ns = mkNoise(c,0.4), nd=mkDist(c,400), nf=c.createBiquadFilter(), ng=c.createGain();
+    nf.type='highpass'; nf.frequency.value=3000;
+    ng.gain.setValueAtTime(0.001,t+1.5); ng.gain.linearRampToValueAtTime(0.3,t+1.6);
+    ng.gain.exponentialRampToValueAtTime(0.001,t+1.9);
+    ns.connect(nd); nd.connect(nf); nf.connect(ng); ng.connect(out);
+    ns.start(t+1.5); ns.stop(t+1.95);
+  },
+
+  // ── D: Distorted / Gritty Synth ───────────────────────────────
+
+  gritA() { // Fuzz stab — note through heavy fuzz pedal
+    const c = ac(), t = c.currentTime, out = mkComp(c);
+    [110, 110.5, 220].forEach(freq => {
+      const osc = c.createOscillator(), ds = mkDist(c,300), g = c.createGain();
+      const filt = c.createBiquadFilter(); filt.type='lowpass';
+      filt.frequency.setValueAtTime(500,t); filt.frequency.exponentialRampToValueAtTime(1800,t+0.1);
+      filt.frequency.exponentialRampToValueAtTime(700,t+1.5);
+      filt.Q.value = 5;
+      osc.type='sawtooth'; osc.frequency.value=freq;
+      g.gain.setValueAtTime(0.001,t); g.gain.linearRampToValueAtTime(0.3,t+0.01);
+      g.gain.setValueAtTime(0.3,t+0.08); g.gain.exponentialRampToValueAtTime(0.001,t+1.6);
+      osc.connect(ds); ds.connect(filt); filt.connect(g); g.connect(out);
+      osc.start(t); osc.stop(t+1.65);
+    });
+  },
+
+  gritB() { // Glitch burst — stuttering distorted square
+    const c = ac(), t = c.currentTime, out = mkComp(c);
+    for (let i=0; i<6; i++) {
+      const d = i * 0.13;
+      const on = i % 2 === 0; // stutter on/off
+      if (!on) continue;
+      const osc = c.createOscillator(), ds = mkDist(c,500), g = c.createGain();
+      osc.type='square'; osc.frequency.value = 110 + i*22;
+      g.gain.setValueAtTime(0.001,t+d); g.gain.linearRampToValueAtTime(0.4,t+d+0.008);
+      g.gain.setValueAtTime(0.4,t+d+0.09); g.gain.exponentialRampToValueAtTime(0.001,t+d+0.18);
+      osc.connect(ds); ds.connect(g); g.connect(out);
+      osc.start(t+d); osc.stop(t+d+0.2);
+    }
+  },
+
+  gritC() { // Grind then ring — rough grind fades into clean FM tone
+    const c = ac(), t = c.currentTime, out = mkComp(c);
+    // Dirty grind
+    const osc = c.createOscillator(), ds = mkDist(c,200), g = c.createGain();
+    const filt = c.createBiquadFilter(); filt.type='bandpass'; filt.frequency.value=400; filt.Q.value=3;
+    osc.type='sawtooth'; osc.frequency.value=110;
+    g.gain.setValueAtTime(0.001,t); g.gain.linearRampToValueAtTime(0.5,t+0.01);
+    g.gain.setValueAtTime(0.5,t+0.3); g.gain.exponentialRampToValueAtTime(0.001,t+0.7);
+    osc.connect(ds); ds.connect(filt); filt.connect(g); g.connect(out);
+    osc.start(t); osc.stop(t+0.75);
+    // Clean FM ring-out
+    const mod = c.createOscillator(), modG = c.createGain();
+    const car = c.createOscillator(), cG = c.createGain();
+    mod.frequency.value=220; modG.gain.setValueAtTime(880,t+0.3); modG.gain.exponentialRampToValueAtTime(20,t+2.5);
+    mod.connect(modG); modG.connect(car.frequency);
+    car.type='sine'; car.frequency.value=440;
+    cG.gain.setValueAtTime(0.001,t+0.3); cG.gain.linearRampToValueAtTime(0.3,t+0.35);
+    cG.gain.exponentialRampToValueAtTime(0.001,t+2.5);
+    car.connect(cG); cG.connect(out);
+    mod.start(t+0.3); mod.stop(t+2.55); car.start(t+0.3); car.stop(t+2.55);
+  },
+};
+
+function play(id) {
+  PLAYS[id]?.();
+  // Flash the button
+  const btns = document.querySelectorAll('.snd');
+  btns.forEach(b => { if (b.getAttribute('onclick') === `play('${id}')`) { b.classList.add('playing'); setTimeout(() => b.classList.remove('playing'), 600); }});
+}
+</script>
+</body>
+</html>

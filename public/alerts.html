@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Alerts</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      width: 1920px;
+      height: 300px;
+      overflow: hidden;
+      background: transparent;
+    }
+
+    #alert-wrap {
+      position: absolute;
+      bottom: 24px;
+      right: 48px;
+      width: 620px;
+    }
+
+    /* ── Alert panel ─────────────────────────────────────────────── */
+    .alert {
+      position: relative;
+      background: linear-gradient(135deg, rgba(13,0,26,0.97) 0%, rgba(26,0,51,0.97) 60%, rgba(45,0,80,0.97) 100%);
+      border: 1px solid var(--accent);
+      border-left: 4px solid var(--accent);
+      border-radius: 6px;
+      padding: 18px 22px 18px 22px;
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      transform: translateX(110%);
+      opacity: 0;
+      box-shadow:
+        0 0 0 1px rgba(0,0,0,0.8),
+        0 0 25px -5px var(--accent),
+        inset 0 0 30px rgba(0,0,0,0.5);
+      overflow: hidden;
+    }
+
+    /* Scan-line overlay */
+    .alert::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0, 0, 0, 0.12) 2px,
+        rgba(0, 0, 0, 0.12) 4px
+      );
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    /* Top-right corner bracket */
+    .alert::after {
+      content: '';
+      position: absolute;
+      top: 6px; right: 6px;
+      width: 12px; height: 12px;
+      border-top: 2px solid var(--accent);
+      border-right: 2px solid var(--accent);
+      opacity: 0.7;
+    }
+
+    /* Bottom-left corner bracket */
+    .corner-bl {
+      position: absolute;
+      bottom: 6px; left: 6px;
+      width: 12px; height: 12px;
+      border-bottom: 2px solid var(--accent);
+      border-left: 2px solid var(--accent);
+      opacity: 0.7;
+    }
+
+    /* ── Animations ──────────────────────────────────────────────── */
+    @keyframes slideIn {
+      0%   { transform: translateX(110%); opacity: 0; }
+      60%  { transform: translateX(-8px); opacity: 1; }
+      80%  { transform: translateX(4px); }
+      100% { transform: translateX(0); opacity: 1; }
+    }
+
+    @keyframes slideOut {
+      0%   { transform: translateX(0); opacity: 1; }
+      20%  { transform: translateX(-10px); opacity: 1; }
+      100% { transform: translateX(110%); opacity: 0; }
+    }
+
+    @keyframes glitchText {
+      0%, 88%, 100% { clip-path: none; transform: none; color: #ffffff; }
+      89% { clip-path: polygon(0 15%, 100% 15%, 100% 38%, 0 38%); transform: translateX(-5px); color: var(--accent); }
+      90% { clip-path: polygon(0 55%, 100% 55%, 100% 75%, 0 75%); transform: translateX(5px); }
+      91% { clip-path: polygon(0 5%,  100% 5%,  100% 25%, 0 25%); transform: translateX(-3px); }
+      92% { clip-path: none; transform: translateX(2px); }
+      93% { clip-path: polygon(0 70%, 100% 70%, 100% 90%, 0 90%); transform: translateX(-2px); color: #ff2d78; }
+      94% { clip-path: none; transform: none; color: #ffffff; }
+    }
+
+    @keyframes borderPulse {
+      0%, 100% { box-shadow: 0 0 0 1px rgba(0,0,0,0.8), 0 0 25px -5px var(--accent), inset 0 0 30px rgba(0,0,0,0.5); }
+      50%       { box-shadow: 0 0 0 1px rgba(0,0,0,0.8), 0 0 40px -2px var(--accent), inset 0 0 30px rgba(0,0,0,0.5); }
+    }
+
+    @keyframes iconGlow {
+      0%, 100% { filter: drop-shadow(0 0 6px var(--accent)); }
+      50%       { filter: drop-shadow(0 0 14px var(--accent)) brightness(1.3); }
+    }
+
+    .alert.show {
+      animation:
+        slideIn 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards,
+        borderPulse 2s ease-in-out 0.5s infinite;
+    }
+
+    .alert.hide {
+      animation: slideOut 0.4s ease-in forwards;
+    }
+
+    /* ── Content ─────────────────────────────────────────────────── */
+    .icon {
+      font-size: 32px;
+      line-height: 1;
+      flex-shrink: 0;
+      animation: iconGlow 2s ease-in-out 0.5s infinite;
+      z-index: 2;
+    }
+
+    .content {
+      flex: 1;
+      min-width: 0;
+      z-index: 2;
+    }
+
+    .label {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      color: var(--accent);
+      text-shadow: 0 0 10px var(--accent);
+      margin-bottom: 5px;
+    }
+
+    .user {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 22px;
+      font-weight: 900;
+      color: #ffffff;
+      text-shadow: 0 0 12px rgba(255,255,255,0.4);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      animation: glitchText 6s infinite;
+    }
+
+    .detail {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 12px;
+      color: #c9a0dc;
+      margin-top: 4px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      opacity: 0.9;
+    }
+
+    /* Tier badge */
+    .badge {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 1px;
+      padding: 2px 8px;
+      border: 1px solid var(--accent);
+      border-radius: 3px;
+      color: var(--accent);
+      margin-left: 8px;
+      vertical-align: middle;
+      opacity: 0.8;
+    }
+
+    /* ── Type colours ─────────────────────────────────────────────── */
+    .alert[data-type="follow"]  { --accent: #00f5ff; }
+    .alert[data-type="sub"]     { --accent: #bf00ff; }
+    .alert[data-type="resub"]   { --accent: #9d00ff; }
+    .alert[data-type="giftsub"] { --accent: #ff2d78; }
+    .alert[data-type="bits"]    { --accent: #ffd700; }
+    .alert[data-type="raid"]    { --accent: #ff6b35; }
+  </style>
+</head>
+<body>
+<div id="alert-wrap"></div>
+
+<script>
+const DURATION = 7500;
+
+const ICONS = {
+  follow:  '👤',
+  sub:     '⭐',
+  resub:   '🌟',
+  giftsub: '🎁',
+  bits:    '💎',
+  raid:    '⚡',
+};
+
+const LABELS = {
+  follow:  'NEW FOLLOWER',
+  sub:     'NEW SUBSCRIBER',
+  resub:   'RESUBSCRIBED',
+  giftsub: 'GIFT SUBSCRIPTIONS',
+  bits:    'BITS',
+  raid:    'INCOMING RAID',
+};
+
+let queue   = [];
+let showing = false;
+
+function escHtml(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function buildDetail(data) {
+  const parts = [];
+
+  if (data.tier && ['sub','resub','giftsub'].includes(data.type)) {
+    parts.push(`<span class="badge">${escHtml(data.tier)}</span>`);
+  }
+  if (data.type === 'resub' && data.months)   parts.push(`${escHtml(data.months)} months`);
+  if (data.type === 'giftsub' && data.count)  parts.push(`${escHtml(data.count)} gift sub${data.count > 1 ? 's' : ''}`);
+  if (data.type === 'bits' && data.bits)      parts.push(`${Number(data.bits).toLocaleString()} bits`);
+  if (data.type === 'raid' && data.viewers != null) parts.push(`${Number(data.viewers).toLocaleString()} viewers`);
+
+  if (data.message && ['resub','bits'].includes(data.type) && data.message.trim()) {
+    parts.push(`"${escHtml(data.message.trim())}"`);
+  }
+
+  return parts.join(' &nbsp;·&nbsp; ');
+}
+
+function buildAlert(data) {
+  const el = document.createElement('div');
+  el.className  = 'alert';
+  el.dataset.type = data.type;
+
+  const detail = buildDetail(data);
+
+  el.innerHTML = `
+    <div class="corner-bl"></div>
+    <div class="icon">${ICONS[data.type] ?? '🔔'}</div>
+    <div class="content">
+      <div class="label">${LABELS[data.type] ?? 'ALERT'}</div>
+      <div class="user">${escHtml(data.user)}</div>
+      ${detail ? `<div class="detail">${detail}</div>` : ''}
+    </div>
+  `;
+  return el;
+}
+
+function showNext() {
+  if (!queue.length) { showing = false; return; }
+  showing = true;
+
+  const data = queue.shift();
+  const wrap = document.getElementById('alert-wrap');
+  const el   = buildAlert(data);
+  wrap.appendChild(el);
+
+  // Double rAF ensures the initial transform is painted before we add 'show'
+  requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('show')));
+
+  setTimeout(() => {
+    el.classList.remove('show');
+    el.classList.add('hide');
+    el.addEventListener('animationend', () => { el.remove(); showNext(); }, { once: true });
+  }, DURATION);
+}
+
+function queueAlert(data) {
+  queue.push(data);
+  if (!showing) showNext();
+}
+
+// ── WebSocket connection to server ────────────────────────────────
+function connect() {
+  const ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onmessage = (e) => { try { queueAlert(JSON.parse(e.data)); } catch {} };
+  ws.onclose   = () => setTimeout(connect, 3000);
+  ws.onerror   = () => ws.close();
+}
+
+connect();
+
+// ── Uncomment to preview without a live stream ────────────────────
+// setTimeout(() => queueAlert({ type: 'follow',  user: 'CyberPilot99' }), 500);
+// setTimeout(() => queueAlert({ type: 'sub',     user: 'NeonRider',    tier: 'Tier 1' }), 3000);
+// setTimeout(() => queueAlert({ type: 'resub',   user: 'VoidWalker',   tier: 'Tier 2', months: 7, message: 'Love the stream!' }), 8000);
+// setTimeout(() => queueAlert({ type: 'giftsub', user: 'DataGhost',    tier: 'Tier 1', count: 5 }), 13500);
+// setTimeout(() => queueAlert({ type: 'bits',    user: 'ChromeFox',    bits: 1000, message: 'PogChamp' }), 19000);
+// setTimeout(() => queueAlert({ type: 'raid',    user: 'PixelWarden',  viewers: 47 }), 25000);
+</script>
+</body>
+</html>

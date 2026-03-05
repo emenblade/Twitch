@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Chat</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/tmi.js@1.8.5/dist/tmi.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      background: transparent;
+      overflow: hidden;
+      font-family: 'Share Tech Mono', monospace;
+    }
+
+    #chat {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      gap: 5px;
+      padding: 8px 10px;
+    }
+
+    /* ── Message ─────────────────────────────────────────────────── */
+    .msg {
+      display: flex;
+      align-items: baseline;
+      flex-wrap: wrap;
+      gap: 4px;
+      padding: 5px 10px 5px 8px;
+      border-left: 2px solid var(--user-color, #7b2fff);
+      background: rgba(13, 0, 26, 0.72);
+      border-radius: 0 4px 4px 0;
+      line-height: 1.5;
+      animation: msgIn 0.2s ease-out forwards;
+      opacity: 0;
+    }
+
+    .msg.fade-out {
+      animation: msgOut 0.4s ease-in forwards;
+    }
+
+    @keyframes msgIn {
+      from { opacity: 0; transform: translateX(-6px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+
+    @keyframes msgOut {
+      from { opacity: 1; }
+      to   { opacity: 0; }
+    }
+
+    /* ── Badges ──────────────────────────────────────────────────── */
+    .badges {
+      display: inline-flex;
+      gap: 3px;
+      flex-shrink: 0;
+      align-self: center;
+    }
+
+    .badge {
+      font-size: 9px;
+      letter-spacing: 1px;
+      padding: 1px 5px;
+      border-radius: 2px;
+      font-weight: bold;
+      border: 1px solid currentColor;
+      line-height: 1.4;
+    }
+
+    .badge-broadcaster { color: #ff2d78; }
+    .badge-moderator   { color: #00ff88; }
+    .badge-vip         { color: #bf00ff; }
+    .badge-subscriber  { color: #7b2fff; }
+
+    /* ── Name ────────────────────────────────────────────────────── */
+    .name {
+      font-size: 13px;
+      font-weight: bold;
+      color: var(--user-color, #bf00ff);
+      text-shadow: 0 0 8px var(--user-color, #bf00ff);
+      flex-shrink: 0;
+      letter-spacing: 0.5px;
+    }
+
+    .colon {
+      color: rgba(255,255,255,0.3);
+      font-size: 13px;
+      flex-shrink: 0;
+    }
+
+    /* ── Message text ────────────────────────────────────────────── */
+    .text {
+      font-size: 13px;
+      color: #ddd0f0;
+      word-break: break-word;
+      min-width: 0;
+      flex: 1;
+    }
+
+    /* Emotes rendered as images */
+    .text img {
+      height: 20px;
+      width: auto;
+      vertical-align: middle;
+      margin: 0 1px;
+    }
+  </style>
+</head>
+<body>
+<div id="chat"></div>
+
+<script>
+const MAX_MESSAGES = 20;
+
+// Cyberpunk fallback colors for users with no color set
+const FALLBACKS = [
+  '#00f5ff','#bf00ff','#ff2d78','#9d00ff',
+  '#00c8ff','#d44aff','#ff6b9d','#7b2fff',
+];
+
+function fallbackColor(username) {
+  let hash = 0;
+  for (const c of username) hash = (hash * 31 + c.charCodeAt(0)) & 0xffffffff;
+  return FALLBACKS[Math.abs(hash) % FALLBACKS.length];
+}
+
+function escHtml(s) {
+  return String(s ?? '')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function renderEmotes(message, emotes) {
+  if (!emotes) return escHtml(message);
+
+  // Build replacement map: position → img tag
+  const replacements = [];
+  for (const [id, ranges] of Object.entries(emotes)) {
+    for (const range of ranges) {
+      const [start, end] = range.split('-').map(Number);
+      const text = message.slice(start, end + 1);
+      replacements.push({ start, end, html: `<img src="https://static-cdn.jtvnw.net/emoticons/v2/${id}/default/dark/1.0" alt="${escHtml(text)}" title="${escHtml(text)}">` });
+    }
+  }
+  replacements.sort((a, b) => b.start - a.start);
+
+  let result = message;
+  for (const { start, end, html } of replacements) {
+    result = result.slice(0, start) + html + result.slice(end + 1);
+  }
+  // Escape any remaining plain text portions
+  return result.replace(/(?<![>])[^<>]+(?=[<]|$)/g, m => escHtml(m));
+}
+
+function buildBadges(badges) {
+  if (!badges) return '';
+  const order = ['broadcaster','moderator','vip','subscriber'];
+  const labels = { broadcaster:'LIVE', moderator:'MOD', vip:'VIP', subscriber:'SUB' };
+  return order
+    .filter(k => badges[k] !== undefined)
+    .map(k => `<span class="badge badge-${k}">${labels[k]}</span>`)
+    .join('');
+}
+
+function addMessage(tags, message, emotes) {
+  const chat  = document.getElementById('chat');
+  const color = tags.color || fallbackColor(tags.username);
+
+  const el = document.createElement('div');
+  el.className = 'msg';
+  el.style.setProperty('--user-color', color);
+
+  const badgeHtml = buildBadges(tags.badges);
+  const textHtml  = renderEmotes(message, tags.emotes);
+
+  el.innerHTML = `
+    ${badgeHtml ? `<span class="badges">${badgeHtml}</span>` : ''}
+    <span class="name">${escHtml(tags['display-name'] || tags.username)}</span>
+    <span class="colon">:</span>
+    <span class="text">${textHtml}</span>
+  `;
+
+  chat.appendChild(el);
+
+  // Trim oldest if over limit
+  const msgs = chat.querySelectorAll('.msg');
+  if (msgs.length > MAX_MESSAGES) {
+    const oldest = msgs[0];
+    oldest.classList.add('fade-out');
+    oldest.addEventListener('animationend', () => oldest.remove(), { once: true });
+  }
+}
+
+// ── Connect ───────────────────────────────────────────────────────
+async function getChannel() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('channel')) return params.get('channel');
+  try {
+    const res = await fetch('/status');
+    const data = await res.json();
+    return data.channel || null;
+  } catch {
+    return null;
+  }
+}
+
+async function connect() {
+  const channel = await getChannel();
+  if (!channel) {
+    console.error('No channel configured. Set TWITCH_CHANNEL env var or add ?channel=yourname to the URL.');
+    return;
+  }
+
+  const client = new tmi.Client({ channels: [channel] });
+
+  client.on('message', (_ch, tags, message, self) => {
+    if (self) return;
+    addMessage(tags, message);
+  });
+
+  client.on('disconnected', () => setTimeout(connect, 5000));
+
+  try {
+    await client.connect();
+    console.log(`Chat connected: #${channel}`);
+  } catch (err) {
+    console.error('tmi connect failed:', err);
+    setTimeout(connect, 5000);
+  }
+}
+
+connect();
+</script>
+</body>
+</html>

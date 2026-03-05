@@ -1,0 +1,123 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>StreamAssets</Name>
+  <Repository>ghcr.io/emenblade/twitch:latest</Repository>
+  <Registry>https://github.com/emenblade/Twitch/pkgs/container/twitch</Registry>
+  <Network>bridge</Network>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/emenblade/Twitch/issues</Support>
+  <Project>https://github.com/emenblade/Twitch</Project>
+  <Overview>Self-hosted Twitch stream assets for OBS. Cyberpunk dark-purple design. Includes alerts overlay (follows, subs, gift subs, resubs, bits, raids) and chat overlay. Add /alerts.html and /chat.html as Browser Sources in OBS. Visit /setup after deploy to connect your Twitch account.</Overview>
+  <Category>Tools: Network:Web</Category>
+  <WebUI>http://[IP]:[PORT:3000]/setup</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/emenblade/Twitch/main/Stream-assets.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/emenblade/Twitch/main/Icon.png</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DonateText/>
+  <DonateLink/>
+  <Description>Self-hosted Twitch stream assets for OBS. Cyberpunk dark-purple design. Alerts and chat overlays.</Description>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       PORT
+  ════════════════════════════════════════════════════════════════ -->
+  <Config
+    Name="Web UI Port"
+    Target="3000"
+    Default="3000"
+    Mode="tcp"
+    Description="Host port for the stream assets server. All OBS Browser Sources and the setup page use this port."
+    Type="Port"
+    Display="always"
+    Required="true"
+    Mask="false">3000</Config>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       DATA VOLUME
+  ════════════════════════════════════════════════════════════════ -->
+  <Config
+    Name="Data Path"
+    Target="/app/data"
+    Default="/mnt/user/appdata/stream-assets"
+    Mode="rw"
+    Description="Persistent storage for Twitch auth tokens. Tokens are saved here so they survive container restarts."
+    Type="Path"
+    Display="always"
+    Required="true"
+    Mask="false">/mnt/user/appdata/stream-assets</Config>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       REQUIRED — fill these in before starting the container
+  ════════════════════════════════════════════════════════════════ -->
+  <Config
+    Name="Twitch Client ID"
+    Target="TWITCH_CLIENT_ID"
+    Default=""
+    Mode=""
+    Description="Client ID from your Twitch Developer App. Get it at dev.twitch.tv/console/apps."
+    Type="Variable"
+    Display="always"
+    Required="true"
+    Mask="false"></Config>
+
+  <Config
+    Name="Twitch Client Secret"
+    Target="TWITCH_CLIENT_SECRET"
+    Default=""
+    Mode=""
+    Description="Client Secret from your Twitch Developer App. Keep this private — it is masked in the UI."
+    Type="Variable"
+    Display="always"
+    Required="true"
+    Mask="true"></Config>
+
+  <Config
+    Name="Twitch Channel"
+    Target="TWITCH_CHANNEL"
+    Default=""
+    Mode=""
+    Description="Your Twitch channel name, lowercase. Example: emenblade"
+    Type="Variable"
+    Display="always"
+    Required="true"
+    Mask="false"></Config>
+
+  <Config
+    Name="Host URL"
+    Target="HOST_URL"
+    Default="http://192.168.1.10:3000"
+    Mode=""
+    Description="Full URL where this container is reachable on your network. Used for the Twitch OAuth redirect and the OBS source URLs. Update the port if you changed it above."
+    Type="Variable"
+    Display="always"
+    Required="true"
+    Mask="false">http://192.168.1.10:3000</Config>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       OPTIONAL
+  ════════════════════════════════════════════════════════════════ -->
+  <Config
+    Name="Port (internal)"
+    Target="PORT"
+    Default="3000"
+    Mode=""
+    Description="Internal port the Node.js server listens on. Only change this if you have a port conflict inside the container. Leave blank to use the default (3000)."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false"></Config>
+
+  <Config
+    Name="Data Directory (internal)"
+    Target="DATA_DIR"
+    Default="/app/data"
+    Mode=""
+    Description="Path inside the container where tokens are stored. Leave blank to use the default (/app/data)."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false"></Config>
+
+</Container>

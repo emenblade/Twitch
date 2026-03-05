@@ -1,0 +1,14 @@
+services:
+  twitch-alerts:
+    image: ghcr.io/emenblade/twitch-alerts:latest
+    container_name: twitch-alerts
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - TWITCH_CLIENT_ID=${TWITCH_CLIENT_ID}
+      - TWITCH_CLIENT_SECRET=${TWITCH_CLIENT_SECRET}
+      - TWITCH_CHANNEL=${TWITCH_CHANNEL}
+      - HOST_URL=${HOST_URL:-http://192.168.1.10:3000}

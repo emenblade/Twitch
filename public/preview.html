@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Stream Preview</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0d0015; font-family: 'Share Tech Mono', monospace; color: #e0c3ff; min-height: 100vh; display: flex; flex-direction: column; }
+
+    #controls {
+      background: #0a0018; border-bottom: 1px solid #2d0066;
+      padding: 16px 24px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+    }
+    #controls h1 { font-family: 'Orbitron', sans-serif; font-size: .85rem; color: #bf00ff; letter-spacing: 3px; text-shadow: 0 0 15px #bf00ff; margin-right: 6px; white-space: nowrap; }
+    .divider { width: 1px; height: 28px; background: #2d0066; margin: 0 2px; }
+    .btn { font-family: 'Share Tech Mono', monospace; font-size: .72rem; letter-spacing: 1px; padding: 7px 14px; border-radius: 4px; border: 1px solid var(--c, #3d0080); background: transparent; color: var(--c, #c9a0dc); cursor: pointer; transition: background .15s, box-shadow .15s; text-transform: uppercase; white-space: nowrap; }
+    .btn:hover  { background: color-mix(in srgb, var(--c, #3d0080) 20%, transparent); box-shadow: 0 0 10px -3px var(--c, #3d0080); }
+    .btn:active { opacity: .7; }
+    .btn.follow  { --c: #00f5ff; }
+    .btn.sub     { --c: #bf00ff; }
+    .btn.resub   { --c: #9d00ff; }
+    .btn.giftsub { --c: #ff2d78; }
+    .btn.bits    { --c: #ffd700; }
+    .btn.raid    { --c: #ff6b35; }
+    .btn.auto    { --c: #00ff88; }
+    .btn.clear   { --c: #555; }
+    .btn.chat    { --c: #e0c3ff; }
+    #auto-status { font-size: .7rem; color: #00ff88; letter-spacing: 2px; min-width: 60px; }
+
+    #stage {
+      flex: 1; position: relative; min-height: 500px;
+      background-image: repeating-linear-gradient(45deg, #0e0017 0, #0e0017 1px, transparent 0, transparent 50%), repeating-linear-gradient(-45deg, #0e0017 0, #0e0017 1px, transparent 0, transparent 50%);
+      background-size: 20px 20px;
+    }
+    .obs-frame { position: absolute; border: 1px dashed rgba(123,47,255,0.22); border-radius: 4px; pointer-events: none; }
+    .obs-label { position: absolute; top: -17px; left: 0; font-size: 9px; letter-spacing: 2px; color: rgba(123,47,255,0.38); text-transform: uppercase; white-space: nowrap; }
+    #alert-wrap { position: absolute; bottom: 24px; right: 48px; width: 620px; }
+    #chat-panel { position: absolute; top: 16px; right: 16px; width: 340px; bottom: 208px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; gap: 5px; padding: 8px 10px; }
+    #camera-placeholder { position: absolute; bottom: 16px; right: 16px; width: 340px; height: 183px; background: rgba(255,255,255,0.02); border: 1px dashed rgba(123,47,255,0.18); border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 9px; letter-spacing: 2px; color: rgba(123,47,255,0.28); text-transform: uppercase; }
+
+    /* Alert styles */
+    .alert { position: relative; background: linear-gradient(135deg, rgba(13,0,26,0.97) 0%, rgba(26,0,51,0.97) 60%, rgba(45,0,80,0.97) 100%); border: 1px solid var(--accent); border-left: 4px solid var(--accent); border-radius: 6px; padding: 18px 22px; display: flex; align-items: center; gap: 18px; transform: translateX(110%); opacity: 0; box-shadow: 0 0 0 1px rgba(0,0,0,0.8), 0 0 25px -5px var(--accent), inset 0 0 30px rgba(0,0,0,0.5); overflow: hidden; margin-bottom: 10px; }
+    .alert::before { content: ''; position: absolute; inset: 0; background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.12) 2px, rgba(0,0,0,0.12) 4px); pointer-events: none; z-index: 1; }
+    .alert::after { content: ''; position: absolute; top: 6px; right: 6px; width: 12px; height: 12px; border-top: 2px solid var(--accent); border-right: 2px solid var(--accent); opacity: 0.7; }
+    .corner-bl { position: absolute; bottom: 6px; left: 6px; width: 12px; height: 12px; border-bottom: 2px solid var(--accent); border-left: 2px solid var(--accent); opacity: 0.7; }
+    @keyframes slideIn { 0% { transform: translateX(110%); opacity: 0; } 60% { transform: translateX(-8px); opacity: 1; } 80% { transform: translateX(4px); } 100% { transform: translateX(0); opacity: 1; } }
+    @keyframes slideOut { 0% { transform: translateX(0); opacity: 1; } 20% { transform: translateX(-10px); } 100% { transform: translateX(110%); opacity: 0; } }
+    @keyframes glitchText { 0%,88%,100% { clip-path: none; transform: none; color: #fff; } 89% { clip-path: polygon(0 15%,100% 15%,100% 38%,0 38%); transform: translateX(-5px); color: var(--accent); } 90% { clip-path: polygon(0 55%,100% 55%,100% 75%,0 75%); transform: translateX(5px); } 91% { clip-path: polygon(0 5%,100% 5%,100% 25%,0 25%); transform: translateX(-3px); } 92% { clip-path: none; transform: translateX(2px); } 93% { clip-path: polygon(0 70%,100% 70%,100% 90%,0 90%); transform: translateX(-2px); color: #ff2d78; } 94% { clip-path: none; transform: none; color: #fff; } }
+    @keyframes borderPulse { 0%,100% { box-shadow: 0 0 0 1px rgba(0,0,0,.8), 0 0 25px -5px var(--accent), inset 0 0 30px rgba(0,0,0,.5); } 50% { box-shadow: 0 0 0 1px rgba(0,0,0,.8), 0 0 40px -2px var(--accent), inset 0 0 30px rgba(0,0,0,.5); } }
+    @keyframes iconGlow { 0%,100% { filter: drop-shadow(0 0 6px var(--accent)); } 50% { filter: drop-shadow(0 0 14px var(--accent)) brightness(1.3); } }
+    .alert.show { animation: slideIn .45s cubic-bezier(.16,1,.3,1) forwards, borderPulse 2s ease-in-out .5s infinite; }
+    .alert.hide { animation: slideOut .4s ease-in forwards; }
+    .icon   { font-size: 32px; line-height: 1; flex-shrink: 0; animation: iconGlow 2s ease-in-out .5s infinite; z-index: 2; }
+    .content { flex: 1; min-width: 0; z-index: 2; }
+    .label  { font-family: 'Share Tech Mono',monospace; font-size: 10px; letter-spacing: 4px; text-transform: uppercase; color: var(--accent); text-shadow: 0 0 10px var(--accent); margin-bottom: 5px; }
+    .user   { font-family: 'Orbitron',sans-serif; font-size: 22px; font-weight: 900; color: #fff; text-shadow: 0 0 12px rgba(255,255,255,.4); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; animation: glitchText 6s infinite; }
+    .detail { font-family: 'Share Tech Mono',monospace; font-size: 12px; color: #c9a0dc; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: .9; }
+    .badge  { font-size: 10px; letter-spacing: 1px; padding: 2px 8px; border: 1px solid var(--accent); border-radius: 3px; color: var(--accent); margin-left: 8px; vertical-align: middle; opacity: .8; }
+    .alert[data-type="follow"]  { --accent: #00f5ff; }
+    .alert[data-type="sub"]     { --accent: #bf00ff; }
+    .alert[data-type="resub"]   { --accent: #9d00ff; }
+    .alert[data-type="giftsub"] { --accent: #ff2d78; }
+    .alert[data-type="bits"]    { --accent: #ffd700; }
+    .alert[data-type="raid"]    { --accent: #ff6b35; }
+
+    /* Chat styles */
+    .msg { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px; padding: 5px 10px 5px 8px; border-left: 2px solid var(--user-color, #7b2fff); background: rgba(13,0,26,.72); border-radius: 0 4px 4px 0; line-height: 1.5; animation: msgIn .2s ease-out forwards; opacity: 0; flex-shrink: 0; }
+    .msg.fade-out { animation: msgOut .4s ease-in forwards; }
+    @keyframes msgIn  { from { opacity:0; transform:translateX(-6px); } to { opacity:1; transform:none; } }
+    @keyframes msgOut { from { opacity:1; } to { opacity:0; } }
+    .chat-badges { display:inline-flex; gap:3px; flex-shrink:0; align-self:center; }
+    .chat-badge  { font-size:9px; letter-spacing:1px; padding:1px 5px; border-radius:2px; font-weight:bold; border:1px solid currentColor; line-height:1.4; }
+    .chat-badge.broadcaster { color:#ff2d78; } .chat-badge.moderator { color:#00ff88; } .chat-badge.vip { color:#bf00ff; } .chat-badge.subscriber { color:#7b2fff; }
+    .chat-name  { font-size:13px; font-weight:bold; color:var(--user-color,#bf00ff); text-shadow:0 0 8px var(--user-color,#bf00ff); flex-shrink:0; }
+    .chat-colon { color:rgba(255,255,255,.3); font-size:13px; flex-shrink:0; }
+    .chat-text  { font-size:13px; color:#ddd0f0; word-break:break-word; min-width:0; flex:1; }
+  </style>
+</head>
+<body>
+
+<div id="controls">
+  <h1>⚡ PREVIEW</h1>
+  <div class="divider"></div>
+  <button class="btn follow"  onclick="fire('follow')">Follow</button>
+  <button class="btn sub"     onclick="fire('sub')">Sub</button>
+  <button class="btn resub"   onclick="fire('resub')">Resub</button>
+  <button class="btn giftsub" onclick="fire('giftsub')">Gift Sub</button>
+  <button class="btn bits"    onclick="fire('bits')">Bits</button>
+  <button class="btn raid"    onclick="fire('raid')">Raid</button>
+  <div class="divider"></div>
+  <button class="btn auto" onclick="toggleAuto()">Auto-cycle</button>
+  <span id="auto-status"></span>
+  <button class="btn clear" onclick="clearAlerts()">Clear</button>
+  <div class="divider"></div>
+  <button class="btn chat" onclick="fireChat()">Chat</button>
+  <button class="btn chat" onclick="fireChatBurst()">Burst</button>
+  <button class="btn clear" onclick="clearChat()">Clear Chat</button>
+  <div class="divider"></div>
+  <button class="btn clear" id="mute-btn" onclick="toggleMute()">🔊 Mute</button>
+</div>
+
+<div id="stage">
+  <div class="obs-frame" style="bottom:24px;right:48px;width:620px;height:110px;"><span class="obs-label">Alerts source</span></div>
+  <div id="alert-wrap"></div>
+  <div class="obs-frame" style="top:16px;right:16px;width:340px;bottom:208px;"><span class="obs-label">Chat source</span></div>
+  <div id="chat-panel"></div>
+  <div id="camera-placeholder">Camera</div>
+</div>
+
+<script>
+// ── Audio ─────────────────────────────────────────────────────────
+let audioCtx = null;
+let muted    = false;
+
+function ac() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  return audioCtx;
+}
+function toggleMute() {
+  muted = !muted;
+  document.getElementById('mute-btn').textContent = muted ? '🔇 Unmute' : '🔊 Mute';
+}
+
+// ── DSP helpers ───────────────────────────────────────────────────
+function distortCurve(amt) {
+  const n = 512, cv = new Float32Array(n);
+  for (let i = 0; i < n; i++) { const x = (i*2)/n-1; cv[i] = (Math.PI+amt)*x/(Math.PI+amt*Math.abs(x)); }
+  return cv;
+}
+function mkDist(c, amt) {
+  const ws = c.createWaveShaper(); ws.curve = distortCurve(amt); ws.oversample = '4x'; return ws;
+}
+function mkLimiter(c) {
+  const comp = c.createDynamicsCompressor();
+  comp.threshold.value=-3; comp.knee.value=0; comp.ratio.value=20; comp.attack.value=0.001; comp.release.value=0.1;
+  comp.connect(c.destination); return comp;
+}
+
+// ── Shared synth voice ────────────────────────────────────────────
+// 3 detuned saws → resonant lowpass → light fuzz → envelope
+// All 6 alerts share this timbre so they feel like one instrument
+function note(c, freq, t, dur, vol, out) {
+  [-8, 0, 8].forEach(cents => {
+    const osc  = c.createOscillator();
+    const filt = c.createBiquadFilter();
+    const ds   = mkDist(c, 18);
+    const g    = c.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.value = freq * Math.pow(2, cents / 1200);
+    filt.type = 'lowpass';
+    filt.frequency.setValueAtTime(freq * 1.5, t);
+    filt.frequency.exponentialRampToValueAtTime(freq * 10, t + 0.06);
+    filt.frequency.exponentialRampToValueAtTime(freq * 2.5, t + dur * 0.65);
+    filt.Q.value = 5;
+    g.gain.setValueAtTime(0.001,      t);
+    g.gain.linearRampToValueAtTime(vol / 3, t + 0.018);
+    g.gain.setValueAtTime(vol / 3,    t + dur * 0.55);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    osc.connect(filt); filt.connect(ds); ds.connect(g); g.connect(out);
+    osc.start(t); osc.stop(t + dur + 0.05);
+  });
+}
+
+// Sub bass kick for weight
+function subHit(c, t, out) {
+  const osc = c.createOscillator(), g = c.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(100, t);
+  osc.frequency.exponentialRampToValueAtTime(35, t + 0.45);
+  g.gain.setValueAtTime(0.001, t);
+  g.gain.linearRampToValueAtTime(0.75, t + 0.014);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
+  osc.connect(g); g.connect(out);
+  osc.start(t); osc.stop(t + 0.6);
+}
+
+// A minor: A2=110  C3=130.8  D3=146.8  E3=164.8  G3=196  A3=220  E2=82.4  B2=123.5
+
+const SOUNDS = {
+
+  // FOLLOW — quick upward scan: A2 → E3 → A3
+  follow() {
+    if (muted) return;
+    const c = ac(), t = c.currentTime, out = mkLimiter(c);
+    note(c, 110,   t,        1.0, 0.28, out); // A2
+    note(c, 164.8, t + 0.18, 0.9, 0.28, out); // E3
+    note(c, 220,   t + 0.36, 1.4, 0.32, out); // A3
+  },
+
+  // SUB — sub hit + power fifth E2 → B2 → E3, last note rings long
+  sub() {
+    if (muted) return;
+    const c = ac(), t = c.currentTime, out = mkLimiter(c);
+    subHit(c, t, out);
+    note(c, 82.4,  t + 0.08, 1.1, 0.30, out); // E2
+    note(c, 123.5, t + 0.35, 1.0, 0.30, out); // B2
+    note(c, 164.8, t + 0.60, 2.2, 0.36, out); // E3 — held
+  },
+
+  // RESUB — Am chord arpeggio A2→C3→E3→A3, notes overlap into a swell
+  resub() {
+    if (muted) return;
+    const c = ac(), t = c.currentTime, out = mkLimiter(c);
+    note(c, 110,   t,        2.4, 0.22, out); // A2
+    note(c, 130.8, t + 0.16, 2.2, 0.22, out); // C3
+    note(c, 164.8, t + 0.32, 2.0, 0.24, out); // E3
+    note(c, 220,   t + 0.48, 2.2, 0.28, out); // A3
+  },
+
+  // GIFTSUB — fast cascade A2→D3→E3→G3 then A3 lands with sub hit
+  giftsub() {
+    if (muted) return;
+    const c = ac(), t = c.currentTime, out = mkLimiter(c);
+    note(c, 110,   t,        0.5, 0.24, out); // A2
+    note(c, 146.8, t + 0.12, 0.5, 0.24, out); // D3
+    note(c, 164.8, t + 0.24, 0.5, 0.24, out); // E3
+    note(c, 196,   t + 0.36, 0.5, 0.26, out); // G3
+    note(c, 220,   t + 0.48, 1.8, 0.32, out); // A3 — landing note
+    subHit(c, t + 0.48, out);
+  },
+
+  // BITS — glitch stutter on A3, drops to G3, rings back up on A3
+  bits() {
+    if (muted) return;
+    const c = ac(), t = c.currentTime, out = mkLimiter(c);
+    note(c, 220,   t,        0.18, 0.30, out); // A3 — hit
+    // gap (stutter)
+    note(c, 220,   t + 0.22, 0.18, 0.28, out); // A3 — repeat
+    note(c, 196,   t + 0.40, 0.20, 0.26, out); // G3 — dip
+    note(c, 220,   t + 0.56, 1.4,  0.32, out); // A3 — ring out
+    note(c, 110,   t + 0.56, 1.0,  0.16, out); // A2 — low harmonic
+  },
+
+  // RAID — repeating alarm E2→B2 twice, builds louder, resolves to E3 with big sub
+  raid() {
+    if (muted) return;
+    const c = ac(), t = c.currentTime, out = mkLimiter(c);
+    subHit(c, t, out);
+    note(c, 82.4,  t + 0.05, 0.65, 0.26, out); // E2
+    note(c, 123.5, t + 0.32, 0.65, 0.28, out); // B2
+    note(c, 82.4,  t + 0.68, 0.65, 0.32, out); // E2 — louder
+    note(c, 123.5, t + 0.95, 0.65, 0.34, out); // B2 — louder
+    subHit(c, t + 1.28, out);
+    note(c, 164.8, t + 1.33, 2.8,  0.40, out); // E3 — resolution, held long
+  },
+};
+
+// ── Alert engine ──────────────────────────────────────────────────
+const DURATION = 7500;
+const ICONS  = { follow:'👤', sub:'⭐', resub:'🌟', giftsub:'🎁', bits:'💎', raid:'⚡' };
+const LABELS = { follow:'NEW FOLLOWER', sub:'NEW SUBSCRIBER', resub:'RESUBSCRIBED', giftsub:'GIFT SUBSCRIPTIONS', bits:'BITS', raid:'INCOMING RAID' };
+const SAMPLES = {
+  follow:  { type:'follow',  user:'CyberPilot99' },
+  sub:     { type:'sub',     user:'NeonRider',   tier:'Tier 1' },
+  resub:   { type:'resub',   user:'VoidWalker',  tier:'Tier 2', months:7, message:'Love the stream!' },
+  giftsub: { type:'giftsub', user:'DataGhost',   tier:'Tier 1', count:5 },
+  bits:    { type:'bits',    user:'ChromeFox',   bits:1000, message:'PogChamp' },
+  raid:    { type:'raid',    user:'PixelWarden', viewers:47 },
+};
+
+let queue = [], showing = false, autoTimer = null, autoIndex = 0;
+const AUTO_TYPES = ['follow','sub','resub','giftsub','bits','raid'];
+
+function escHtml(s) { return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function buildDetail(d) {
+  const p = [];
+  if (d.tier && ['sub','resub','giftsub'].includes(d.type)) p.push(`<span class="badge">${escHtml(d.tier)}</span>`);
+  if (d.type==='resub'   && d.months)        p.push(`${d.months} months`);
+  if (d.type==='giftsub' && d.count)         p.push(`${d.count} gift sub${d.count>1?'s':''}`);
+  if (d.type==='bits'    && d.bits)          p.push(`${Number(d.bits).toLocaleString()} bits`);
+  if (d.type==='raid'    && d.viewers!=null) p.push(`${Number(d.viewers).toLocaleString()} viewers`);
+  if (d.message && ['resub','bits'].includes(d.type) && d.message.trim()) p.push(`"${escHtml(d.message.trim())}"`);
+  return p.join(' &nbsp;·&nbsp; ');
+}
+
+function buildEl(data) {
+  const el = document.createElement('div');
+  el.className = 'alert'; el.dataset.type = data.type;
+  const detail = buildDetail(data);
+  el.innerHTML = `<div class="corner-bl"></div><div class="icon">${ICONS[data.type]??'🔔'}</div><div class="content"><div class="label">${LABELS[data.type]??'ALERT'}</div><div class="user">${escHtml(data.user)}</div>${detail?`<div class="detail">${detail}</div>`:''}</div>`;
+  return el;
+}
+
+function showNext() {
+  if (!queue.length) { showing = false; return; }
+  showing = true;
+  const data = queue.shift(), wrap = document.getElementById('alert-wrap'), el = buildEl(data);
+  wrap.appendChild(el);
+  requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('show')));
+  setTimeout(() => {
+    el.classList.remove('show'); el.classList.add('hide');
+    el.addEventListener('animationend', () => { el.remove(); showNext(); }, { once:true });
+  }, DURATION);
+}
+
+function fire(type) {
+  SOUNDS[type]?.();
+  queue.push({ ...SAMPLES[type] });
+  if (!showing) showNext();
+}
+function clearAlerts() { queue=[]; showing=false; document.getElementById('alert-wrap').innerHTML=''; }
+function toggleAuto() {
+  if (autoTimer) { clearInterval(autoTimer); autoTimer=null; document.getElementById('auto-status').textContent=''; }
+  else {
+    fire(AUTO_TYPES[autoIndex++%AUTO_TYPES.length]);
+    autoTimer = setInterval(() => fire(AUTO_TYPES[autoIndex++%AUTO_TYPES.length]), DURATION+500);
+    document.getElementById('auto-status').textContent='RUNNING';
+  }
+}
+
+// ── Chat preview ──────────────────────────────────────────────────
+const MAX_CHAT = 20;
+const FALLBACKS = ['#00f5ff','#bf00ff','#ff2d78','#9d00ff','#00c8ff','#d44aff','#ff6b9d','#7b2fff'];
+function fallbackColor(name) { let h=0; for (const c of name) h=(h*31+c.charCodeAt(0))&0xffffffff; return FALLBACKS[Math.abs(h)%FALLBACKS.length]; }
+const CHAT_SAMPLES = [
+  { name:'CyberPilot99', color:'#00f5ff', badges:{},                  msg:'lets gooo' },
+  { name:'NeonRider',    color:'#ff2d78', badges:{ subscriber:'12' }, msg:'love this stream man' },
+  { name:'VoidWalker',   color:null,      badges:{ moderator:'1' },   msg:'hype hype hype' },
+  { name:'DataGhost',    color:'#bf00ff', badges:{},                  msg:'PogChamp PogChamp' },
+  { name:'ChromeFox',    color:'#ffd700', badges:{ subscriber:'3' },  msg:'that was insane' },
+  { name:'PixelWarden',  color:null,      badges:{},                  msg:'what game is this?' },
+  { name:'QuantumDrift', color:'#9d00ff', badges:{ subscriber:'1' },  msg:'first time here, great vibes' },
+  { name:'GlitchHunter', color:'#ff6b35', badges:{ moderator:'1' },  msg:'clip it!!!' },
+  { name:'Emenblade',    color:'#bf00ff', badges:{ broadcaster:'1' }, msg:'lets get it!' },
+  { name:'ShadowFrame',  color:null,      badges:{},                  msg:'W streamer' },
+];
+let chatIdx = 0;
+
+function addChatMsg({ name, color, badges, msg }) {
+  const panel = document.getElementById('chat-panel');
+  const cl = color || fallbackColor(name);
+  const el = document.createElement('div');
+  el.className = 'msg'; el.style.setProperty('--user-color', cl);
+  const order=['broadcaster','moderator','vip','subscriber'], labels={broadcaster:'LIVE',moderator:'MOD',vip:'VIP',subscriber:'SUB'};
+  const bHtml = order.filter(k=>badges[k]!==undefined).map(k=>`<span class="chat-badge ${k}">${labels[k]}</span>`).join('');
+  el.innerHTML = `${bHtml?`<span class="chat-badges">${bHtml}</span>`:''}<span class="chat-name">${escHtml(name)}</span><span class="chat-colon">:</span><span class="chat-text">${escHtml(msg)}</span>`;
+  panel.appendChild(el);
+  const msgs = panel.querySelectorAll('.msg');
+  if (msgs.length > MAX_CHAT) { const o=msgs[0]; o.classList.add('fade-out'); o.addEventListener('animationend',()=>o.remove(),{once:true}); }
+}
+function fireChat() { addChatMsg(CHAT_SAMPLES[chatIdx++ % CHAT_SAMPLES.length]); }
+function fireChatBurst() { for (let i=0;i<6;i++) setTimeout(()=>fireChat(),i*280); }
+function clearChat() { document.getElementById('chat-panel').innerHTML=''; }
+</script>
+</body>
+</html>
