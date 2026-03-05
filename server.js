@@ -260,6 +260,21 @@ app.get('/auth/callback', async (req, res) => {
   res.send('<script>window.location="/setup"</script>');
 });
 
+app.get('/test/:type', (req, res) => {
+  const samples = {
+    follow:  { type: 'follow',  user: 'CyberPilot99' },
+    sub:     { type: 'sub',     user: 'NeonRider',   tier: 'Tier 1' },
+    resub:   { type: 'resub',   user: 'VoidWalker',  tier: 'Tier 2', months: 7, message: 'Love the stream!' },
+    giftsub: { type: 'giftsub', user: 'DataGhost',   tier: 'Tier 1', count: 5 },
+    bits:    { type: 'bits',    user: 'ChromeFox',   bits: 1000, message: 'PogChamp' },
+    raid:    { type: 'raid',    user: 'PixelWarden', viewers: 47 },
+  };
+  const alert = samples[req.params.type];
+  if (!alert) return res.status(404).json({ error: 'Unknown type. Use: follow, sub, resub, giftsub, bits, raid' });
+  broadcast(alert);
+  res.json({ ok: true, sent: alert });
+});
+
 app.get('/status', (_req, res) => {
   res.json({
     configured:        !!(cfg.clientId && cfg.clientSecret && cfg.channel),
