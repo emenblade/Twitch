@@ -149,10 +149,11 @@
       line-height: 1.4;
     }
 
-    .badge-broadcaster { color: #ff2d78; }
-    .badge-moderator   { color: #00ff88; }
-    .badge-vip         { color: #bf00ff; }
-    .badge-subscriber  { color: #7b2fff; }
+    .badge-broadcaster    { color: #ff2d78; }
+    .badge-moderator      { color: #00ff88; }
+    .badge-lead_moderator { color: #ff2d78; font-style: italic; }
+    .badge-vip            { color: #bf00ff; }
+    .badge-subscriber     { color: #7b2fff; }
 
     /* ── Name ────────────────────────────────────────────────────── */
     .name {
@@ -198,6 +199,13 @@
 
 <script>
 const MAX_MESSAGES = 20;
+
+// ── Custom user titles ─────────────────────────────────────────────
+// Map lowercase username → title shown as a badge next to their name.
+// Example: 'someuser': { label: 'QUEEN', color: '#ff2d78' }
+const CUSTOM_TITLES = {
+
+};
 
 const FALLBACKS = [
   '#00f5ff','#bf00ff','#ff2d78','#9d00ff',
@@ -328,13 +336,26 @@ function parseTags(raw) {
   return tags;
 }
 
-function buildBadges(badges) {
-  const order = ['broadcaster','moderator','vip','subscriber'];
-  const labels = { broadcaster:'LIVE', moderator:'MOD', vip:'VIP', subscriber:'SUB' };
-  return order
+const BADGE_LABELS = {
+  broadcaster:    'I AM LIVE',
+  moderator:      'MOD',
+  lead_moderator: 'mon amour',
+  vip:            'VIP',
+  subscriber:     'SUB',
+};
+const BADGE_ORDER = ['broadcaster', 'lead_moderator', 'moderator', 'vip', 'subscriber'];
+
+function buildBadges(badges, username) {
+  const parts = BADGE_ORDER
     .filter(k => badges[k] !== undefined)
-    .map(k => `<span class="badge badge-${k}">${labels[k]}</span>`)
-    .join('');
+    .map(k => `<span class="badge badge-${k}">${BADGE_LABELS[k] ?? k}</span>`);
+
+  const custom = CUSTOM_TITLES[(username || '').toLowerCase()];
+  if (custom) {
+    parts.push(`<span class="badge" style="color:${custom.color || '#bf00ff'};border-color:${custom.color || '#bf00ff'}">${custom.label}</span>`);
+  }
+
+  return parts.join('');
 }
 
 function addMessage(tags, message) {
@@ -345,12 +366,13 @@ function addMessage(tags, message) {
   el.className = 'msg';
   el.style.setProperty('--user-color', color);
 
-  const badgeHtml = buildBadges(tags.badges);
+  const username  = tags['display-name'] || 'user';
+  const badgeHtml = buildBadges(tags.badges, username);
   const textHtml  = renderEmotes(message, tags.emotes);
 
   el.innerHTML = `
     ${badgeHtml ? `<span class="badges">${badgeHtml}</span>` : ''}
-    <span class="name">${escHtml(tags['display-name'] || 'user')}</span>
+    <span class="name">${escHtml(username)}</span>
     <span class="colon">:</span>
     <span class="text">${textHtml}</span>
   `;
