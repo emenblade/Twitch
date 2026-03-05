@@ -305,30 +305,44 @@ function errorPage(msg) {
 function setupPageHtml(hasTokens, authUrl) {
   return `<!DOCTYPE html>
 <html lang="en"><head>
-<meta charset="UTF-8"><title>Twitch Alerts — Setup</title>
+<meta charset="UTF-8"><title>Stream Assets — Setup</title>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
-  body{background:#0d0015;color:#e0c3ff;font-family:'Share Tech Mono',monospace;padding:40px;min-height:100vh}
+  body{background:#0d0015;color:#e0c3ff;font-family:'Share Tech Mono',monospace;padding:32px;min-height:100vh}
   h1{font-family:'Orbitron',sans-serif;color:#bf00ff;font-size:1.8rem;margin-bottom:6px;text-shadow:0 0 20px #bf00ff}
-  .sub{color:#7b2fff;letter-spacing:2px;font-size:.8rem;margin-bottom:36px}
-  .card{background:#1a0033;border:1px solid #3d0080;border-radius:8px;padding:24px;margin-bottom:20px;max-width:640px;position:relative}
+  .sub{color:#7b2fff;letter-spacing:2px;font-size:.8rem;margin-bottom:32px}
+  .layout{display:flex;gap:24px;align-items:flex-start}
+  .col-left{flex:0 0 500px;min-width:0}
+  .col-right{flex:1;min-width:280px}
+  .card{background:#1a0033;border:1px solid #3d0080;border-radius:8px;padding:24px;margin-bottom:20px;position:relative}
   .card::before{content:'';position:absolute;top:6px;right:6px;width:10px;height:10px;border-top:2px solid #7b2fff;border-right:2px solid #7b2fff}
   h2{font-family:'Orbitron',sans-serif;color:#00f5ff;font-size:.75rem;letter-spacing:3px;text-transform:uppercase;margin-bottom:16px}
   p{color:#c9a0dc;line-height:1.7;margin-bottom:10px}
   .url{background:#080012;border:1px solid #3d0080;border-radius:4px;padding:10px 14px;font-size:.85rem;color:#00f5ff;margin:10px 0;word-break:break-all;user-select:all}
-  .btn{display:inline-block;background:linear-gradient(135deg,#7b2fff,#bf00ff);color:#fff;padding:12px 28px;border-radius:6px;text-decoration:none;font-family:'Orbitron',sans-serif;font-size:.75rem;letter-spacing:2px;margin-top:8px;box-shadow:0 0 20px rgba(191,0,255,.3)}
+  .btn{display:inline-block;background:linear-gradient(135deg,#7b2fff,#bf00ff);color:#fff;padding:12px 28px;border-radius:6px;text-decoration:none;font-family:'Orbitron',sans-serif;font-size:.75rem;letter-spacing:2px;margin-top:8px;box-shadow:0 0 20px rgba(191,0,255,.3);cursor:pointer;border:none}
   .btn:hover{opacity:.85}
   .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:8px;vertical-align:middle}
   .green{background:#00ff88;box-shadow:0 0 8px #00ff88}
   .red{background:#ff2d78;box-shadow:0 0 8px #ff2d78}
   a:not(.btn){color:#bf00ff}
   ol{padding-left:20px;color:#c9a0dc;line-height:2}
+  .test-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:4px}
+  .tbtn{font-family:'Share Tech Mono',monospace;font-size:.75rem;letter-spacing:1px;padding:9px 6px;border-radius:4px;border:1px solid var(--c);background:transparent;color:var(--c);cursor:pointer;text-transform:uppercase;transition:background .15s,box-shadow .15s}
+  .tbtn:hover{background:color-mix(in srgb,var(--c) 15%,transparent);box-shadow:0 0 10px -3px var(--c)}
+  .tbtn:active{opacity:.6}
+  .tbtn.follow{--c:#00f5ff}.tbtn.sub{--c:#bf00ff}.tbtn.resub{--c:#9d00ff}
+  .tbtn.giftsub{--c:#ff2d78}.tbtn.bits{--c:#ffd700}.tbtn.raid{--c:#ff6b35}
+  #test-fb{margin-top:12px;font-size:.78rem;color:#00ff88;min-height:1.2em;letter-spacing:1px}
+  .chat-frame{width:100%;height:560px;border:1px solid #3d0080;border-radius:4px;background:#080012;display:block}
 </style>
 </head><body>
 
-<h1>⚡ TWITCH ALERTS</h1>
+<h1>⚡ STREAM ASSETS</h1>
 <div class="sub">SETUP CONSOLE // EMENBLADE</div>
+
+<div class="layout">
+<div class="col-left">
 
 <div class="card">
   <h2>Status</h2>
@@ -339,15 +353,30 @@ function setupPageHtml(hasTokens, authUrl) {
 
 ${hasTokens ? `
 <div class="card">
-  <h2>OBS Browser Source</h2>
-  <p>Add a <strong>Browser Source</strong> in OBS with this URL:</p>
+  <h2>OBS Browser Sources</h2>
+  <p>Alerts overlay — <strong>1920 × 300</strong>, transparent background, bottom of scene:</p>
   <div class="url">${cfg.hostUrl}/alerts.html</div>
-  <p>Recommended: <strong>1920 × 300</strong>, enable <strong>transparent background</strong>. Position it at the bottom of your scene.</p>
+  <p style="margin-top:14px">Chat overlay — <strong>380 × 700</strong>, transparent background, right side:</p>
+  <div class="url">${cfg.hostUrl}/chat.html</div>
 </div>
 
 <div class="card">
-  <h2>Re-authorize / Reconnect</h2>
-  <p>Use this if you need to re-connect your Twitch account or changed your channel name.</p>
+  <h2>Test Alerts</h2>
+  <p>Fire a test alert to your OBS Browser Source. Make sure it's open first.</p>
+  <div class="test-grid">
+    <button class="tbtn follow" onclick="test('follow')">Follow</button>
+    <button class="tbtn sub"    onclick="test('sub')">Sub</button>
+    <button class="tbtn resub"  onclick="test('resub')">Resub</button>
+    <button class="tbtn giftsub" onclick="test('giftsub')">Gift Sub</button>
+    <button class="tbtn bits"   onclick="test('bits')">Bits</button>
+    <button class="tbtn raid"   onclick="test('raid')">Raid</button>
+  </div>
+  <div id="test-fb"></div>
+</div>
+
+<div class="card">
+  <h2>Re-authorize</h2>
+  <p>Use this if you need to re-connect your Twitch account.</p>
   <a class="btn" href="${authUrl}">Re-connect Twitch</a>
 </div>
 ` : `
@@ -365,6 +394,30 @@ ${hasTokens ? `
   <a class="btn" href="${authUrl}">Connect with Twitch</a>
 </div>
 `}
+
+</div><!-- col-left -->
+<div class="col-right">
+  <div class="card" style="padding:16px">
+    <h2>Chat Preview</h2>
+    <iframe src="/chat.html" class="chat-frame" frameborder="0"></iframe>
+  </div>
+</div><!-- col-right -->
+</div><!-- layout -->
+
+<script>
+async function test(type) {
+  const fb = document.getElementById('test-fb');
+  fb.textContent = 'Sending ' + type + '...';
+  try {
+    const r = await fetch('/test/' + type);
+    const d = await r.json();
+    fb.textContent = d.ok ? '✓ ' + type + ' alert sent' : '✗ ' + (d.error || 'error');
+  } catch(e) {
+    fb.textContent = '✗ Request failed';
+  }
+  setTimeout(() => fb.textContent = '', 3000);
+}
+</script>
 
 </body></html>`;
 }
