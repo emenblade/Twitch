@@ -434,7 +434,7 @@ ${hasTokens ? `
 <div class="col-right">
   <div class="card" style="padding:16px">
     <h2>Chat Preview</h2>
-    <iframe src="/chat.html" class="chat-frame" frameborder="0"></iframe>
+    <iframe id="chat-preview" src="/chat.html" class="chat-frame" frameborder="0"></iframe>
   </div>
 
   <div class="card">
@@ -484,6 +484,11 @@ async function loadTitlesUI() {
   }
 }
 
+function reloadChatPreview() {
+  const f = document.getElementById('chat-preview');
+  f.src = f.src;
+}
+
 async function addTitle(e) {
   e.preventDefault();
   const username = document.getElementById('t-user').value.trim();
@@ -494,11 +499,13 @@ async function addTitle(e) {
   document.getElementById('t-user').value = '';
   document.getElementById('t-label').value = '';
   loadTitlesUI();
+  reloadChatPreview();
 }
 
 async function removeTitle(username) {
   await fetch('/titles/' + encodeURIComponent(username), { method:'DELETE' });
   loadTitlesUI();
+  reloadChatPreview();
 }
 
 loadTitlesUI();
