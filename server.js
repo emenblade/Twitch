@@ -277,11 +277,12 @@ app.get('/test/:type', (req, res) => {
 
 app.get('/status', (_req, res) => {
   res.json({
-    configured:        !!(cfg.clientId && cfg.clientSecret && cfg.channel),
-    authenticated:     !!loadTokens(),
+    configured:         !!(cfg.clientId && cfg.clientSecret && cfg.channel),
+    authenticated:      !!loadTokens(),
     eventsub_connected: eventSubWs?.readyState === WebSocket.OPEN,
-    obs_clients:       obsClients.size,
-    channel:           cfg.channel,
+    obs_clients:        obsClients.size,
+    channel:            cfg.channel,
+    broadcaster_id:     broadcasterId || null,
   });
 });
 

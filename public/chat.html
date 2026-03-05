@@ -216,22 +216,83 @@ function escHtml(s) {
     .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-function renderEmotes(message, emotes) {
-  if (!emotes) return escHtml(message);
-  const replacements = [];
-  for (const [id, ranges] of Object.entries(emotes)) {
-    for (const range of ranges) {
-      const [start, end] = range.split('-').map(Number);
-      const text = message.slice(start, end + 1);
-      replacements.push({ start, end, html: `<img src="https://static-cdn.jtvnw.net/emoticons/v2/${id}/default/dark/1.0" alt="${escHtml(text)}" title="${escHtml(text)}">` });
+// Third-party emote map: name → image url (BTTV + 7TV)
+const tpEmotes = {};
+
+async function loadThirdPartyEmotes(channelId) {
+  // BTTV global
+  try {
+    const data = await fetch('https://api.betterttv.net/3/cached/emotes/global').then(r => r.json());
+    for (const e of data) tpEmotes[e.code] = `https://cdn.betterttv.net/emote/${e.id}/1x`;
+  } catch {}
+
+  // 7TV global
+  try {
+    const data = await fetch('https://7tv.io/v3/emote-sets/global').then(r => r.json());
+    for (const e of (data.emotes || [])) {
+      const url = e.data?.host?.url;
+      if (url) tpEmotes[e.name] = `https:${url}/1x.webp`;
+    }
+  } catch {}
+
+  if (!channelId) return;
+
+  // BTTV channel
+  try {
+    const data = await fetch(`https://api.betterttv.net/3/cached/users/twitch/${channelId}`).then(r => r.json());
+    for (const e of [...(data.channelEmotes || []), ...(data.sharedEmotes || [])]) {
+      tpEmotes[e.code] = `https://cdn.betterttv.net/emote/${e.id}/1x`;
+    }
+  } catch {}
+
+  // 7TV channel
+  try {
+    const data = await fetch(`https://7tv.io/v3/users/twitch/${channelId}`).then(r => r.json());
+    for (const e of (data.emote_set?.emotes || [])) {
+      const url = e.data?.host?.url;
+      if (url) tpEmotes[e.name] = `https:${url}/1x.webp`;
+    }
+  } catch {}
+}
+
+function renderEmotes(message, twitchEmotes) {
+  // Build position map: start → {end, html} for all emote replacements
+  const byPos = new Map();
+
+  // Twitch native emotes (come with exact char positions)
+  if (twitchEmotes) {
+    for (const [id, ranges] of Object.entries(twitchEmotes)) {
+      for (const range of ranges) {
+        const [s, e] = range.split('-').map(Number);
+        const text = message.slice(s, e + 1);
+        byPos.set(s, { end: e, html: `<img src="https://static-cdn.jtvnw.net/emoticons/v2/${id}/default/dark/1.0" alt="${escHtml(text)}" title="${escHtml(text)}">` });
+      }
     }
   }
-  replacements.sort((a, b) => b.start - a.start);
-  let result = message;
-  for (const { start, end, html } of replacements) {
-    result = result.slice(0, start) + html + result.slice(end + 1);
+
+  // Covered positions (don't let third-party emotes overlap Twitch ones)
+  const covered = new Set();
+  for (const [s, { end: e }] of byPos) for (let i = s; i <= e; i++) covered.add(i);
+
+  // Third-party emotes: scan each word in message
+  const wordRe = /\S+/g;
+  let m;
+  while ((m = wordRe.exec(message)) !== null) {
+    const s = m.index, e = s + m[0].length - 1;
+    if (covered.has(s)) continue;
+    const url = tpEmotes[m[0]];
+    if (url) byPos.set(s, { end: e, html: `<img src="${url}" alt="${escHtml(m[0])}" title="${escHtml(m[0])}">` });
   }
-  return result.replace(/(?<![>])[^<>]+(?=[<]|$)/g, m => escHtml(m));
+
+  // Apply replacements right-to-left so positions stay valid
+  const sorted = [...byPos.entries()].sort((a, b) => b[0] - a[0]);
+  let result = message;
+  for (const [s, { end: e, html }] of sorted) {
+    result = result.slice(0, s) + html + result.slice(e + 1);
+  }
+
+  // Escape any remaining plain text
+  return result.replace(/(?<![>])[^<>]+(?=[<]|$)/g, chunk => escHtml(chunk));
 }
 
 function parseTags(raw) {
@@ -320,6 +381,12 @@ async function getChannel() {
 async function connect() {
   const channel = await getChannel();
   if (!channel) { console.error('No channel configured.'); return; }
+
+  // Load BTTV + 7TV emotes (fire and forget — chat works fine if these fail)
+  try {
+    const status = await fetch('/status').then(r => r.json());
+    loadThirdPartyEmotes(status.broadcaster_id || null);
+  } catch { loadThirdPartyEmotes(null); }
 
   const dot = document.getElementById('status-dot');
   const ws  = new WebSocket('wss://irc-ws.chat.twitch.tv');
