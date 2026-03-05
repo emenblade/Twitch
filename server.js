@@ -20,7 +20,17 @@ const cfg = {
 cfg.redirectUri = cfg.callbackUrl || `${cfg.hostUrl}/auth/callback`;
 
 // ── Token storage ─────────────────────────────────────────────────────────────
-const tokensFile = path.join(cfg.dataDir, 'tokens.json');
+const tokensFile  = path.join(cfg.dataDir, 'tokens.json');
+const titlesFile  = path.join(cfg.dataDir, 'custom-titles.json');
+
+function loadTitles() {
+  try { return JSON.parse(fs.readFileSync(titlesFile, 'utf8')); }
+  catch { return {}; }
+}
+function saveTitles(titles) {
+  fs.mkdirSync(cfg.dataDir, { recursive: true });
+  fs.writeFileSync(titlesFile, JSON.stringify(titles, null, 2));
+}
 
 function loadTokens() {
   try { return JSON.parse(fs.readFileSync(tokensFile, 'utf8')); }
@@ -275,6 +285,24 @@ app.get('/test/:type', (req, res) => {
   res.json({ ok: true, sent: alert });
 });
 
+app.get('/titles', (_req, res) => res.json(loadTitles()));
+
+app.post('/titles', express.json(), (req, res) => {
+  const { username, label, color } = req.body || {};
+  if (!username || !label) return res.status(400).json({ error: 'username and label required' });
+  const titles = loadTitles();
+  titles[username.toLowerCase()] = { label, color: color || '#bf00ff' };
+  saveTitles(titles);
+  res.json({ ok: true });
+});
+
+app.delete('/titles/:username', (req, res) => {
+  const titles = loadTitles();
+  delete titles[req.params.username.toLowerCase()];
+  saveTitles(titles);
+  res.json({ ok: true });
+});
+
 app.get('/status', (_req, res) => {
   res.json({
     configured:         !!(cfg.clientId && cfg.clientSecret && cfg.channel),
@@ -335,7 +363,13 @@ function setupPageHtml(hasTokens, authUrl) {
   .tbtn.follow{--c:#00f5ff}.tbtn.sub{--c:#bf00ff}.tbtn.resub{--c:#9d00ff}
   .tbtn.giftsub{--c:#ff2d78}.tbtn.bits{--c:#ffd700}.tbtn.raid{--c:#ff6b35}
   #test-fb{margin-top:12px;font-size:.78rem;color:#00ff88;min-height:1.2em;letter-spacing:1px}
-  .chat-frame{width:100%;height:560px;border:1px solid #3d0080;border-radius:4px;background:#080012;display:block}
+  .chat-frame{width:100%;height:400px;border:1px solid #3d0080;border-radius:4px;background:#080012;display:block}
+  .t-form{display:grid;grid-template-columns:1fr 1fr auto auto;gap:8px;align-items:center;margin-top:4px}
+  .t-input{background:#080012;border:1px solid #3d0080;border-radius:4px;padding:7px 10px;color:#e0c3ff;font-family:'Share Tech Mono',monospace;font-size:.8rem;width:100%}
+  .t-input:focus{outline:none;border-color:#7b2fff}
+  .t-color{width:36px;height:32px;border:1px solid #3d0080;border-radius:4px;background:#080012;cursor:pointer;padding:2px}
+  table{width:100%;border-collapse:collapse;margin-top:10px}
+  td{vertical-align:middle}
 </style>
 </head><body>
 
@@ -402,6 +436,18 @@ ${hasTokens ? `
     <h2>Chat Preview</h2>
     <iframe src="/chat.html" class="chat-frame" frameborder="0"></iframe>
   </div>
+
+  <div class="card">
+    <h2>Custom User Titles</h2>
+    <p>Give specific chatters a named badge next to their name.</p>
+    <form class="t-form" onsubmit="addTitle(event)">
+      <input id="t-user"  class="t-input" placeholder="username" autocomplete="off" spellcheck="false">
+      <input id="t-label" class="t-input" placeholder="title" autocomplete="off" spellcheck="false">
+      <input id="t-color" class="t-color" type="color" value="#bf00ff" title="Badge color">
+      <button type="submit" class="btn" style="padding:7px 14px;margin:0;font-size:.7rem">Add</button>
+    </form>
+    <table><tbody id="titles-tbody"></tbody></table>
+  </div>
 </div><!-- col-right -->
 </div><!-- layout -->
 
@@ -418,6 +464,44 @@ async function test(type) {
   }
   setTimeout(() => fb.textContent = '', 3000);
 }
+
+// ── Custom titles ──────────────────────────────────────────────────
+async function loadTitlesUI() {
+  const titles = await fetch('/titles').then(r => r.json()).catch(() => ({}));
+  const tbody = document.getElementById('titles-tbody');
+  tbody.innerHTML = '';
+  const entries = Object.entries(titles);
+  if (!entries.length) {
+    tbody.innerHTML = '<tr><td colspan="3" style="color:#7b2fff;opacity:.5;padding:10px 0;font-size:.8rem">No custom titles yet.</td></tr>';
+    return;
+  }
+  for (const [username, {label, color}] of entries) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = \`<td style="padding:5px 8px 5px 0;color:#e0c3ff">\${username}</td>
+      <td style="padding:5px 8px"><span style="color:\${color};border:1px solid \${color};padding:1px 6px;border-radius:2px;font-size:10px">\${label}</span></td>
+      <td style="padding:5px 0;text-align:right"><button onclick="removeTitle('\${username}')" style="background:transparent;border:1px solid #ff2d78;color:#ff2d78;border-radius:3px;padding:2px 8px;cursor:pointer;font-family:inherit;font-size:.7rem">Remove</button></td>\`;
+    tbody.appendChild(tr);
+  }
+}
+
+async function addTitle(e) {
+  e.preventDefault();
+  const username = document.getElementById('t-user').value.trim();
+  const label    = document.getElementById('t-label').value.trim();
+  const color    = document.getElementById('t-color').value;
+  if (!username || !label) return;
+  await fetch('/titles', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username, label, color}) });
+  document.getElementById('t-user').value = '';
+  document.getElementById('t-label').value = '';
+  loadTitlesUI();
+}
+
+async function removeTitle(username) {
+  await fetch('/titles/' + encodeURIComponent(username), { method:'DELETE' });
+  loadTitlesUI();
+}
+
+loadTitlesUI();
 </script>
 
 </body></html>`;

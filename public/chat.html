@@ -200,12 +200,8 @@
 <script>
 const MAX_MESSAGES = 20;
 
-// ── Custom user titles ─────────────────────────────────────────────
-// Map lowercase username → title shown as a badge next to their name.
-// Example: 'someuser': { label: 'QUEEN', color: '#ff2d78' }
-const CUSTOM_TITLES = {
-
-};
+// Custom titles loaded from server at runtime — manage them at /setup
+let CUSTOM_TITLES = {};
 
 const FALLBACKS = [
   '#00f5ff','#bf00ff','#ff2d78','#9d00ff',
@@ -404,7 +400,8 @@ async function connect() {
   const channel = await getChannel();
   if (!channel) { console.error('No channel configured.'); return; }
 
-  // Load BTTV + 7TV emotes (fire and forget — chat works fine if these fail)
+  // Load custom titles + BTTV/7TV emotes (fire and forget)
+  try { CUSTOM_TITLES = await fetch('/titles').then(r => r.json()); } catch {}
   try {
     const status = await fetch('/status').then(r => r.json());
     loadThirdPartyEmotes(status.broadcaster_id || null);
