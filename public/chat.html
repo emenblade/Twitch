@@ -5,7 +5,6 @@
   <title>Chat</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-  <script src="https://cdn.jsdelivr.net/npm/tmi.js@1.8.5/dist/tmi.min.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -235,8 +234,40 @@ function renderEmotes(message, emotes) {
   return result.replace(/(?<![>])[^<>]+(?=[<]|$)/g, m => escHtml(m));
 }
 
+function parseTags(raw) {
+  const tags = {};
+  for (const part of raw.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq === -1) continue;
+    const k = part.slice(0, eq), v = part.slice(eq + 1);
+    tags[k] = v;
+  }
+  // Parse badges into object
+  if (tags.badges) {
+    const b = {};
+    for (const pair of tags.badges.split(',')) {
+      const [name, ver] = pair.split('/');
+      if (name) b[name] = ver;
+    }
+    tags.badges = b;
+  } else {
+    tags.badges = {};
+  }
+  // Parse emotes into tmi-style object
+  if (tags.emotes && tags.emotes !== '') {
+    const e = {};
+    for (const part of tags.emotes.split('/')) {
+      const [id, ranges] = part.split(':');
+      if (id && ranges) e[id] = ranges.split(',');
+    }
+    tags.emotes = e;
+  } else {
+    tags.emotes = null;
+  }
+  return tags;
+}
+
 function buildBadges(badges) {
-  if (!badges) return '';
   const order = ['broadcaster','moderator','vip','subscriber'];
   const labels = { broadcaster:'LIVE', moderator:'MOD', vip:'VIP', subscriber:'SUB' };
   return order
@@ -247,7 +278,7 @@ function buildBadges(badges) {
 
 function addMessage(tags, message) {
   const chat  = document.getElementById('chat');
-  const color = tags.color || fallbackColor(tags.username);
+  const color = tags.color || fallbackColor(tags['display-name'] || 'user');
 
   const el = document.createElement('div');
   el.className = 'msg';
@@ -258,7 +289,7 @@ function addMessage(tags, message) {
 
   el.innerHTML = `
     ${badgeHtml ? `<span class="badges">${badgeHtml}</span>` : ''}
-    <span class="name">${escHtml(tags['display-name'] || tags.username)}</span>
+    <span class="name">${escHtml(tags['display-name'] || 'user')}</span>
     <span class="colon">:</span>
     <span class="text">${textHtml}</span>
   `;
@@ -273,7 +304,7 @@ function addMessage(tags, message) {
   }
 }
 
-// ── Connect ───────────────────────────────────────────────────────
+// ── Twitch IRC over WebSocket (no external library) ───────────────
 async function getChannel() {
   const params = new URLSearchParams(window.location.search);
   if (params.get('channel')) return params.get('channel');
@@ -288,32 +319,44 @@ async function getChannel() {
 
 async function connect() {
   const channel = await getChannel();
-  if (!channel) {
-    console.error('No channel configured.');
-    return;
-  }
+  if (!channel) { console.error('No channel configured.'); return; }
 
   const dot = document.getElementById('status-dot');
-  const client = new tmi.Client({ channels: [channel] });
+  const ws  = new WebSocket('wss://irc-ws.chat.twitch.tv');
 
-  client.on('message', (_ch, tags, message, self) => {
-    if (self) return;
-    addMessage(tags, message);
-  });
+  ws.onopen = () => {
+    ws.send('CAP REQ :twitch.tv/tags twitch.tv/commands');
+    ws.send('PASS SCHMOOPIIE');
+    ws.send('NICK justinfan' + Math.floor(Math.random() * 99999));
+    ws.send('JOIN #' + channel);
+  };
 
-  client.on('connected', () => dot.classList.add('live'));
-  client.on('disconnected', () => {
+  ws.onmessage = (e) => {
+    for (const line of e.data.split('\r\n')) {
+      if (line.startsWith('PING')) { ws.send('PONG :tmi.twitch.tv'); continue; }
+
+      // @tags :user!user@... PRIVMSG #channel :message
+      const match = line.match(/^@(\S+) :\S+ PRIVMSG #\S+ :(.*)$/);
+      if (!match) continue;
+
+      const tags    = parseTags(match[1]);
+      const message = match[2];
+      addMessage(tags, message);
+    }
+  };
+
+  ws.onclose = () => {
     dot.classList.remove('live');
     setTimeout(connect, 5000);
-  });
+  };
 
-  try {
-    await client.connect();
-    console.log(`Chat connected: #${channel}`);
-  } catch (err) {
-    console.error('tmi connect failed:', err);
-    setTimeout(connect, 5000);
-  }
+  ws.onerror = () => ws.close();
+
+  // Mark connected once we get the JOIN confirmation
+  const origOnMessage = ws.onmessage;
+  ws.addEventListener('message', (e) => {
+    if (e.data.includes('JOIN #' + channel)) dot.classList.add('live');
+  });
 }
 
 connect();
