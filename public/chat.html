@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <title>Chat</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/tmi.js@1.8.5/dist/tmi.min.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -17,16 +17,89 @@
       font-family: 'Share Tech Mono', monospace;
     }
 
-    #chat {
+    /* ── Outer panel (always visible) ────────────────────────────── */
+    #chat-panel {
       position: absolute;
-      bottom: 0;
-      left: 0;
-      right: 0;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      background: rgba(13, 0, 26, 0.55);
+      border: 1px solid rgba(123, 47, 255, 0.3);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    /* Top-right corner bracket */
+    #chat-panel::after {
+      content: '';
+      position: absolute;
+      top: 6px; right: 6px;
+      width: 10px; height: 10px;
+      border-top: 1px solid rgba(123, 47, 255, 0.5);
+      border-right: 1px solid rgba(123, 47, 255, 0.5);
+      pointer-events: none;
+    }
+
+    /* Bottom-left corner bracket */
+    #chat-panel::before {
+      content: '';
+      position: absolute;
+      bottom: 6px; left: 6px;
+      width: 10px; height: 10px;
+      border-bottom: 1px solid rgba(123, 47, 255, 0.5);
+      border-left: 1px solid rgba(123, 47, 255, 0.5);
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    /* ── Header ──────────────────────────────────────────────────── */
+    #chat-header {
+      flex-shrink: 0;
+      padding: 7px 12px 6px;
+      border-bottom: 1px solid rgba(123, 47, 255, 0.25);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    #chat-header .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #7b2fff;
+      box-shadow: 0 0 6px #7b2fff;
+      flex-shrink: 0;
+    }
+
+    #chat-header .dot.live {
+      background: #00ff88;
+      box-shadow: 0 0 6px #00ff88;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.4; }
+    }
+
+    #chat-header span {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 9px;
+      letter-spacing: 3px;
+      color: rgba(123, 47, 255, 0.7);
+      text-transform: uppercase;
+    }
+
+    /* ── Messages area ───────────────────────────────────────────── */
+    #chat {
+      flex: 1;
       display: flex;
       flex-direction: column;
       justify-content: flex-end;
-      gap: 5px;
-      padding: 8px 10px;
+      gap: 4px;
+      padding: 8px 8px;
+      overflow: hidden;
+      min-height: 0;
     }
 
     /* ── Message ─────────────────────────────────────────────────── */
@@ -35,13 +108,14 @@
       align-items: baseline;
       flex-wrap: wrap;
       gap: 4px;
-      padding: 5px 10px 5px 8px;
+      padding: 4px 8px 4px 7px;
       border-left: 2px solid var(--user-color, #7b2fff);
-      background: rgba(13, 0, 26, 0.72);
+      background: rgba(13, 0, 26, 0.6);
       border-radius: 0 4px 4px 0;
       line-height: 1.5;
       animation: msgIn 0.2s ease-out forwards;
       opacity: 0;
+      flex-shrink: 0;
     }
 
     .msg.fade-out {
@@ -83,7 +157,7 @@
 
     /* ── Name ────────────────────────────────────────────────────── */
     .name {
-      font-size: 13px;
+      font-size: 12px;
       font-weight: bold;
       color: var(--user-color, #bf00ff);
       text-shadow: 0 0 8px var(--user-color, #bf00ff);
@@ -93,20 +167,19 @@
 
     .colon {
       color: rgba(255,255,255,0.3);
-      font-size: 13px;
+      font-size: 12px;
       flex-shrink: 0;
     }
 
     /* ── Message text ────────────────────────────────────────────── */
     .text {
-      font-size: 13px;
+      font-size: 12px;
       color: #ddd0f0;
       word-break: break-word;
       min-width: 0;
       flex: 1;
     }
 
-    /* Emotes rendered as images */
     .text img {
       height: 20px;
       width: auto;
@@ -116,12 +189,17 @@
   </style>
 </head>
 <body>
-<div id="chat"></div>
+<div id="chat-panel">
+  <div id="chat-header">
+    <div class="dot" id="status-dot"></div>
+    <span>Live Chat</span>
+  </div>
+  <div id="chat"></div>
+</div>
 
 <script>
 const MAX_MESSAGES = 20;
 
-// Cyberpunk fallback colors for users with no color set
 const FALLBACKS = [
   '#00f5ff','#bf00ff','#ff2d78','#9d00ff',
   '#00c8ff','#d44aff','#ff6b9d','#7b2fff',
@@ -141,8 +219,6 @@ function escHtml(s) {
 
 function renderEmotes(message, emotes) {
   if (!emotes) return escHtml(message);
-
-  // Build replacement map: position → img tag
   const replacements = [];
   for (const [id, ranges] of Object.entries(emotes)) {
     for (const range of ranges) {
@@ -152,12 +228,10 @@ function renderEmotes(message, emotes) {
     }
   }
   replacements.sort((a, b) => b.start - a.start);
-
   let result = message;
   for (const { start, end, html } of replacements) {
     result = result.slice(0, start) + html + result.slice(end + 1);
   }
-  // Escape any remaining plain text portions
   return result.replace(/(?<![>])[^<>]+(?=[<]|$)/g, m => escHtml(m));
 }
 
@@ -171,7 +245,7 @@ function buildBadges(badges) {
     .join('');
 }
 
-function addMessage(tags, message, emotes) {
+function addMessage(tags, message) {
   const chat  = document.getElementById('chat');
   const color = tags.color || fallbackColor(tags.username);
 
@@ -191,7 +265,6 @@ function addMessage(tags, message, emotes) {
 
   chat.appendChild(el);
 
-  // Trim oldest if over limit
   const msgs = chat.querySelectorAll('.msg');
   if (msgs.length > MAX_MESSAGES) {
     const oldest = msgs[0];
@@ -205,7 +278,7 @@ async function getChannel() {
   const params = new URLSearchParams(window.location.search);
   if (params.get('channel')) return params.get('channel');
   try {
-    const res = await fetch('/status');
+    const res  = await fetch('/status');
     const data = await res.json();
     return data.channel || null;
   } catch {
@@ -216,10 +289,11 @@ async function getChannel() {
 async function connect() {
   const channel = await getChannel();
   if (!channel) {
-    console.error('No channel configured. Set TWITCH_CHANNEL env var or add ?channel=yourname to the URL.');
+    console.error('No channel configured.');
     return;
   }
 
+  const dot = document.getElementById('status-dot');
   const client = new tmi.Client({ channels: [channel] });
 
   client.on('message', (_ch, tags, message, self) => {
@@ -227,7 +301,11 @@ async function connect() {
     addMessage(tags, message);
   });
 
-  client.on('disconnected', () => setTimeout(connect, 5000));
+  client.on('connected', () => dot.classList.add('live'));
+  client.on('disconnected', () => {
+    dot.classList.remove('live');
+    setTimeout(connect, 5000);
+  });
 
   try {
     await client.connect();
