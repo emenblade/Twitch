@@ -111,8 +111,22 @@
 
 <script>
 // ── Audio ─────────────────────────────────────────────────────────
-let audioCtx = null;
-let muted    = false;
+let audioCtx    = null;
+let muted       = false;
+let customSounds = {};
+
+async function loadCustomSounds() {
+  try { customSounds = await fetch('/sounds').then(r => r.json()); } catch {}
+}
+
+function playAlertSound(type) {
+  if (customSounds[type]) {
+    if (muted) return;
+    new Audio('/sounds/' + type + '?t=' + Date.now()).play().catch(() => {});
+    return;
+  }
+  SOUNDS[type]?.();
+}
 
 function ac() {
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -298,7 +312,7 @@ function showNext() {
 }
 
 function fire(type) {
-  SOUNDS[type]?.();
+  playAlertSound(type);
   queue.push({ ...SAMPLES[type] });
   if (!showing) showNext();
 }
@@ -345,6 +359,9 @@ function addChatMsg({ name, color, badges, msg }) {
 function fireChat() { addChatMsg(CHAT_SAMPLES[chatIdx++ % CHAT_SAMPLES.length]); }
 function fireChatBurst() { for (let i=0;i<6;i++) setTimeout(()=>fireChat(),i*280); }
 function clearChat() { document.getElementById('chat-panel').innerHTML=''; }
+
+loadCustomSounds();
+window.addEventListener('focus', loadCustomSounds);
 </script>
 </body>
 </html>

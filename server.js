@@ -32,6 +32,26 @@ function saveTitles(titles) {
   fs.writeFileSync(titlesFile, JSON.stringify(titles, null, 2));
 }
 
+// ── Custom sounds ──────────────────────────────────────────────────────────────
+const soundsDir   = path.join(cfg.dataDir, 'sounds');
+const ALERT_TYPES = ['follow', 'sub', 'resub', 'giftsub', 'bits', 'raid'];
+const MIME_TO_EXT = {
+  'audio/mpeg': 'mp3', 'audio/mp3': 'mp3',
+  'audio/ogg': 'ogg',  'audio/wav': 'wav', 'audio/x-wav': 'wav',
+  'audio/webm': 'webm', 'audio/flac': 'flac', 'audio/x-flac': 'flac',
+  'audio/mp4': 'm4a',  'audio/x-m4a': 'm4a', 'audio/aac': 'aac',
+};
+const EXT_TO_MIME = { mp3:'audio/mpeg', ogg:'audio/ogg', wav:'audio/wav', webm:'audio/webm', flac:'audio/flac', m4a:'audio/mp4', aac:'audio/aac' };
+const SOUND_EXTS  = [...new Set(Object.values(MIME_TO_EXT))];
+
+function findSoundFile(type) {
+  for (const ext of SOUND_EXTS) {
+    const fp = path.join(soundsDir, `${type}.${ext}`);
+    if (fs.existsSync(fp)) return { fp, ext };
+  }
+  return null;
+}
+
 function loadTokens() {
   try { return JSON.parse(fs.readFileSync(tokensFile, 'utf8')); }
   catch { return null; }
@@ -326,6 +346,42 @@ app.delete('/titles/:username', (req, res) => {
   res.json({ ok: true });
 });
 
+// ── Sound management routes ────────────────────────────────────────────────────
+app.get('/sounds', (_req, res) => {
+  const map = {};
+  for (const t of ALERT_TYPES) { const f = findSoundFile(t); map[t] = f ? f.ext : null; }
+  res.json(map);
+});
+
+app.get('/sounds/:type', (req, res) => {
+  const { type } = req.params;
+  if (!ALERT_TYPES.includes(type)) return res.status(404).end();
+  const found = findSoundFile(type);
+  if (!found) return res.status(404).end();
+  res.setHeader('Content-Type', EXT_TO_MIME[found.ext] || 'audio/mpeg');
+  res.sendFile(found.fp);
+});
+
+app.post('/sounds/:type', express.raw({ type: '*/*', limit: '20mb' }), (req, res) => {
+  const { type } = req.params;
+  if (!ALERT_TYPES.includes(type)) return res.status(400).json({ error: 'Invalid type' });
+  const ct  = (req.headers['content-type'] || '').split(';')[0].trim();
+  const ext = MIME_TO_EXT[ct];
+  if (!ext) return res.status(400).json({ error: `Unsupported format: ${ct}` });
+  fs.mkdirSync(soundsDir, { recursive: true });
+  for (const e of SOUND_EXTS) { try { fs.unlinkSync(path.join(soundsDir, `${type}.${e}`)); } catch {} }
+  fs.writeFileSync(path.join(soundsDir, `${type}.${ext}`), req.body);
+  console.log(`Custom sound uploaded: ${type}.${ext}`);
+  res.json({ ok: true });
+});
+
+app.delete('/sounds/:type', (req, res) => {
+  const { type } = req.params;
+  if (!ALERT_TYPES.includes(type)) return res.status(400).json({ error: 'Invalid type' });
+  for (const ext of SOUND_EXTS) { try { fs.unlinkSync(path.join(soundsDir, `${type}.${ext}`)); } catch {} }
+  res.json({ ok: true });
+});
+
 app.get('/status', (_req, res) => {
   res.json({
     configured:         !!(cfg.clientId && cfg.clientSecret && cfg.channel),
@@ -486,6 +542,26 @@ ${hasTokens ? `
     <a class="btn" href="${authUrl}">Re-connect Twitch</a>
   </div>
 </div>
+
+<div class="card" style="margin-top:16px">
+  <h2>Custom Alert Sounds</h2>
+  <p>Upload audio files (MP3, WAV, OGG, WEBM, FLAC — max 20 MB each) to replace the built-in synth sounds. Changes take effect immediately in the browser source.</p>
+  <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-top:10px">
+    ${['follow','sub','resub','giftsub','bits','raid'].map(t => {
+      const clr = {follow:'#00f5ff',sub:'#bf00ff',resub:'#9d00ff',giftsub:'#ff2d78',bits:'#ffd700',raid:'#ff6b35'}[t];
+      return `<div style="background:#080012;border:1px solid #3d0080;border-radius:4px;padding:10px;text-align:center">
+        <div style="color:${clr};font-size:.68rem;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px">${t}</div>
+        <div id="sstat-${t}" style="font-size:.65rem;color:#4a2080;margin-bottom:6px;min-height:1em">—</div>
+        <label style="cursor:pointer;display:block">
+          <input type="file" accept="audio/*" style="display:none" onchange="uploadSound('${t}',this)">
+          <span style="display:block;font-size:.62rem;letter-spacing:1px;padding:4px 0;border:1px solid ${clr};border-radius:3px;color:${clr};text-transform:uppercase;cursor:pointer">Upload</span>
+        </label>
+        <button onclick="removeSound('${t}')" id="sdel-${t}" style="display:none;width:100%;margin-top:4px;background:transparent;border:1px solid #ff2d78;color:#ff2d78;border-radius:3px;padding:3px;cursor:pointer;font-family:inherit;font-size:.62rem">Remove</button>
+      </div>`;
+    }).join('')}
+  </div>
+  <div id="sound-fb" style="margin-top:10px;font-size:.72rem;min-height:1.1em;letter-spacing:1px"></div>
+</div>
 ` : `
 <div style="display:flex;flex-direction:column;gap:16px;max-width:600px">
   <div class="card">
@@ -585,6 +661,42 @@ function addFeedEvent(data) {
 })();
 
 if (document.getElementById('titles-tbody')) loadTitlesUI();
+
+// ── Custom sounds ──────────────────────────────────────────────────
+async function loadSoundsUI() {
+  const sounds = await fetch('/sounds').then(r => r.json()).catch(() => ({}));
+  for (const [type, ext] of Object.entries(sounds)) {
+    const stat = document.getElementById('sstat-' + type);
+    const del  = document.getElementById('sdel-' + type);
+    if (!stat) continue;
+    stat.textContent  = ext ? ext.toUpperCase() : '—';
+    stat.style.color  = ext ? '#00ff88' : '#4a2080';
+    if (del) del.style.display = ext ? 'block' : 'none';
+  }
+}
+
+async function uploadSound(type, input) {
+  const file = input.files[0];
+  if (!file) return;
+  const fb = document.getElementById('sound-fb');
+  fb.style.color = '#00f5ff';
+  fb.textContent = 'Uploading ' + type + '...';
+  try {
+    const r = await fetch('/sounds/' + type, { method: 'POST', headers: { 'Content-Type': file.type }, body: file });
+    const d = await r.json();
+    if (d.ok) { fb.style.color = '#00ff88'; fb.textContent = '\\u2713 ' + type + ' sound uploaded'; loadSoundsUI(); }
+    else       { fb.style.color = '#ff2d78'; fb.textContent = '\\u2717 ' + (d.error || 'Upload failed'); }
+  } catch { fb.style.color = '#ff2d78'; fb.textContent = '\\u2717 Request failed'; }
+  setTimeout(() => { const f = document.getElementById('sound-fb'); if (f) f.textContent = ''; }, 3000);
+  input.value = '';
+}
+
+async function removeSound(type) {
+  await fetch('/sounds/' + type, { method: 'DELETE' });
+  loadSoundsUI();
+}
+
+if (document.getElementById('sstat-follow')) loadSoundsUI();
 </script>
 
 </body></html>`;

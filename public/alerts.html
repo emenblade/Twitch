@@ -291,6 +291,13 @@ function queueAlert(data) {
   if (!showing) showNext();
 }
 
+// ── Custom sounds ──────────────────────────────────────────────────
+let customSounds = {};
+
+async function loadCustomSounds() {
+  try { customSounds = await fetch('/sounds').then(r => r.json()); } catch {}
+}
+
 // ── Sound engine ──────────────────────────────────────────────────
 let audioCtx = null;
 
@@ -347,6 +354,10 @@ function subHit(c, t, out) {
 }
 
 function playSound(type) {
+  if (customSounds[type]) {
+    new Audio('/sounds/' + type + '?t=' + Date.now()).play().catch(() => {});
+    return;
+  }
   try {
     const c = ac(), t = c.currentTime, out = mkLimiter(c);
     switch (type) {
@@ -403,6 +414,7 @@ function connect() {
   ws.onerror   = () => ws.close();
 }
 
+loadCustomSounds().then(() => { setInterval(loadCustomSounds, 60000); });
 connect();
 
 // ── Uncomment to preview without a live stream ────────────────────

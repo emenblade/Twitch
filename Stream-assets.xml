@@ -96,6 +96,20 @@
     Mask="false">http://192.168.1.10:3000</Config>
 
   <!-- ═══════════════════════════════════════════════════════════════
+       ONE-TIME OAUTH SETUP (can remove after auth is complete)
+  ════════════════════════════════════════════════════════════════ -->
+  <Config
+    Name="OAuth Callback URL"
+    Target="CALLBACK_URL"
+    Default=""
+    Mode=""
+    Description="Only needed for initial Twitch auth. If your HOST_URL is HTTP (local IP), Twitch requires an HTTPS redirect URI. Set this to your HTTPS URL (e.g. a Cloudflare Tunnel or Nginx Proxy URL) just for setup. After you complete the /setup auth flow, you can clear this field — tokens are saved and this is no longer needed."
+    Type="Variable"
+    Display="always"
+    Required="false"
+    Mask="false"></Config>
+
+  <!-- ═══════════════════════════════════════════════════════════════
        OPTIONAL
   ════════════════════════════════════════════════════════════════ -->
   <Config
