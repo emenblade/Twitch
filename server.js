@@ -158,6 +158,7 @@ async function setupSubscriptions() {
     await createSubscription('channel.subscription.message', '1', { broadcaster_user_id: id });
     await createSubscription('channel.cheer',                '1', { broadcaster_user_id: id });
     await createSubscription('channel.raid',                 '1', { to_broadcaster_user_id: id });
+    await createSubscription('channel.channel_points_custom_reward_redemption.add', '1', { broadcaster_user_id: id });
   } catch (err) {
     console.error('Subscription setup failed:', err.message);
   }
@@ -204,6 +205,15 @@ function handleEvent(payload) {
     case 'channel.raid':
       alert = { type: 'raid', user: event.from_broadcaster_user_name, viewers: event.viewers };
       break;
+    case 'channel.channel_points_custom_reward_redemption.add':
+      broadcastChatEvent({
+        type:   'redemption',
+        user:   event.user_name,
+        reward: event.reward.title,
+        cost:   event.reward.cost,
+        input:  event.user_input || '',
+      });
+      break;
   }
 
   if (alert) {
@@ -217,11 +227,22 @@ function tierLabel(tier) {
 }
 
 // ── OBS client WebSocket server ───────────────────────────────────────────────
-const obsClients = new Set();
+const obsClients  = new Set();
+const chatClients = new Set();
 
 function broadcast(data) {
   const msg = JSON.stringify(data);
   obsClients.forEach(ws => { if (ws.readyState === WebSocket.OPEN) ws.send(msg); });
+}
+
+function broadcastTitles(titles) {
+  const msg = JSON.stringify({ type: 'titles_update', titles });
+  chatClients.forEach(ws => { if (ws.readyState === WebSocket.OPEN) ws.send(msg); });
+}
+
+function broadcastChatEvent(data) {
+  const msg = JSON.stringify(data);
+  chatClients.forEach(ws => { if (ws.readyState === WebSocket.OPEN) ws.send(msg); });
 }
 
 // ── Token auto-refresh every 2 hours ─────────────────────────────────────────
@@ -293,6 +314,7 @@ app.post('/titles', express.json(), (req, res) => {
   const titles = loadTitles();
   titles[username.toLowerCase()] = { label, color: color || '#bf00ff' };
   saveTitles(titles);
+  broadcastTitles(titles);
   res.json({ ok: true });
 });
 
@@ -300,6 +322,7 @@ app.delete('/titles/:username', (req, res) => {
   const titles = loadTitles();
   delete titles[req.params.username.toLowerCase()];
   saveTitles(titles);
+  broadcastTitles(titles);
   res.json({ ok: true });
 });
 
@@ -320,7 +343,7 @@ function buildAuthUrl() {
     client_id:     cfg.clientId,
     redirect_uri:  cfg.redirectUri,
     response_type: 'code',
-    scope:         'moderator:read:followers channel:read:subscriptions bits:read',
+    scope:         'moderator:read:followers channel:read:subscriptions bits:read channel:read:redemptions',
     force_verify:  'true',
     state:          crypto.randomBytes(16).toString('hex'),
   });
@@ -334,134 +357,166 @@ function errorPage(msg) {
 function setupPageHtml(hasTokens, authUrl) {
   return `<!DOCTYPE html>
 <html lang="en"><head>
-<meta charset="UTF-8"><title>Stream Assets — Setup</title>
+<meta charset="UTF-8"><title>Dashboard</title>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
-  body{background:#0d0015;color:#e0c3ff;font-family:'Share Tech Mono',monospace;padding:32px;min-height:100vh}
-  h1{font-family:'Orbitron',sans-serif;color:#bf00ff;font-size:1.8rem;margin-bottom:6px;text-shadow:0 0 20px #bf00ff}
-  .sub{color:#7b2fff;letter-spacing:2px;font-size:.8rem;margin-bottom:32px}
-  .layout{display:flex;gap:24px;align-items:flex-start}
-  .col-left{flex:0 0 500px;min-width:0}
-  .col-right{flex:1;min-width:280px}
-  .card{background:#1a0033;border:1px solid #3d0080;border-radius:8px;padding:24px;margin-bottom:20px;position:relative}
-  .card::before{content:'';position:absolute;top:6px;right:6px;width:10px;height:10px;border-top:2px solid #7b2fff;border-right:2px solid #7b2fff}
-  h2{font-family:'Orbitron',sans-serif;color:#00f5ff;font-size:.75rem;letter-spacing:3px;text-transform:uppercase;margin-bottom:16px}
-  p{color:#c9a0dc;line-height:1.7;margin-bottom:10px}
-  .url{background:#080012;border:1px solid #3d0080;border-radius:4px;padding:10px 14px;font-size:.85rem;color:#00f5ff;margin:10px 0;word-break:break-all;user-select:all}
-  .btn{display:inline-block;background:linear-gradient(135deg,#7b2fff,#bf00ff);color:#fff;padding:12px 28px;border-radius:6px;text-decoration:none;font-family:'Orbitron',sans-serif;font-size:.75rem;letter-spacing:2px;margin-top:8px;box-shadow:0 0 20px rgba(191,0,255,.3);cursor:pointer;border:none}
+  body{background:#0d0015;color:#e0c3ff;font-family:'Share Tech Mono',monospace;padding:20px 24px;min-height:100vh}
+
+  /* ── Header ─────────────────────────────────────────────────────── */
+  .header{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:20px}
+  .header-title h1{font-family:'Orbitron',sans-serif;color:#bf00ff;font-size:1.5rem;text-shadow:0 0 20px #bf00ff;line-height:1}
+  .header-title .sub{color:#7b2fff;letter-spacing:2px;font-size:.68rem;margin-top:4px}
+  .header-status{display:flex;align-items:center;gap:14px;background:#1a0033;border:1px solid #3d0080;border-radius:6px;padding:7px 14px;flex-shrink:0}
+  .sitem{display:flex;align-items:center;gap:5px;font-size:.68rem;letter-spacing:1px;color:#9d77cc;white-space:nowrap}
+  .sdot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+  .sdot.on{background:#00ff88;box-shadow:0 0 5px #00ff88}
+  .sdot.off{background:#ff2d78;box-shadow:0 0 5px #ff2d78}
+
+  /* ── Cards ──────────────────────────────────────────────────────── */
+  .card{background:#1a0033;border:1px solid #3d0080;border-radius:8px;padding:18px;position:relative}
+  .card::before{content:'';position:absolute;top:6px;right:6px;width:9px;height:9px;border-top:1px solid #7b2fff;border-right:1px solid #7b2fff}
+  h2{font-family:'Orbitron',sans-serif;color:#00f5ff;font-size:.68rem;letter-spacing:3px;text-transform:uppercase;margin-bottom:12px}
+  p{color:#c9a0dc;line-height:1.65;margin-bottom:8px;font-size:.82rem}
+  .url{background:#080012;border:1px solid #3d0080;border-radius:4px;padding:8px 12px;font-size:.78rem;color:#00f5ff;margin:6px 0;word-break:break-all;user-select:all}
+  .btn{display:inline-block;background:linear-gradient(135deg,#7b2fff,#bf00ff);color:#fff;padding:9px 22px;border-radius:6px;text-decoration:none;font-family:'Orbitron',sans-serif;font-size:.68rem;letter-spacing:2px;box-shadow:0 0 18px rgba(191,0,255,.3);cursor:pointer;border:none;margin-top:6px}
   .btn:hover{opacity:.85}
-  .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:8px;vertical-align:middle}
-  .green{background:#00ff88;box-shadow:0 0 8px #00ff88}
-  .red{background:#ff2d78;box-shadow:0 0 8px #ff2d78}
   a:not(.btn){color:#bf00ff}
-  ol{padding-left:20px;color:#c9a0dc;line-height:2}
-  .test-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:4px}
-  .tbtn{font-family:'Share Tech Mono',monospace;font-size:.75rem;letter-spacing:1px;padding:9px 6px;border-radius:4px;border:1px solid var(--c);background:transparent;color:var(--c);cursor:pointer;text-transform:uppercase;transition:background .15s,box-shadow .15s}
+  ol{padding-left:18px;color:#c9a0dc;line-height:2;font-size:.82rem}
+
+  /* ── Layout rows ─────────────────────────────────────────────────── */
+  .main-row{display:flex;gap:16px;margin-bottom:16px;align-items:flex-start}
+  .bottom-row{display:flex;gap:16px;align-items:flex-start}
+  .col-right{flex:1;display:flex;flex-direction:column;gap:16px;min-width:0}
+
+  /* ── Chat iframe ─────────────────────────────────────────────────── */
+  .chat-frame{width:100%;height:500px;border:1px solid #3d0080;border-radius:4px;background:#080012;display:block}
+
+  /* ── Event feed ──────────────────────────────────────────────────── */
+  #event-feed{height:500px;overflow-y:auto;display:flex;flex-direction:column;gap:5px;scrollbar-width:thin;scrollbar-color:#3d0080 transparent}
+  #event-feed::-webkit-scrollbar{width:4px}
+  #event-feed::-webkit-scrollbar-thumb{background:#3d0080;border-radius:2px}
+  .ev-empty{color:#3d0080;font-size:.75rem;padding:8px 0}
+  .ev-row{display:flex;align-items:baseline;gap:8px;padding:5px 10px;background:#080012;border-left:2px solid #ffd700;border-radius:0 4px 4px 0;font-size:.75rem;flex-shrink:0}
+  .ev-time{color:#4a2080;flex-shrink:0;font-size:.68rem;font-variant-numeric:tabular-nums}
+  .ev-user{color:#ffd700;font-weight:bold;flex-shrink:0}
+  .ev-detail{color:rgba(255,215,0,.65)}
+  .ev-input{color:#ddd0f0;font-style:italic}
+
+  /* ── Test buttons ────────────────────────────────────────────────── */
+  .test-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-top:4px}
+  .tbtn{font-family:'Share Tech Mono',monospace;font-size:.68rem;letter-spacing:1px;padding:8px 4px;border-radius:4px;border:1px solid var(--c);background:transparent;color:var(--c);cursor:pointer;text-transform:uppercase;transition:background .15s}
   .tbtn:hover{background:color-mix(in srgb,var(--c) 15%,transparent);box-shadow:0 0 10px -3px var(--c)}
   .tbtn:active{opacity:.6}
   .tbtn.follow{--c:#00f5ff}.tbtn.sub{--c:#bf00ff}.tbtn.resub{--c:#9d00ff}
   .tbtn.giftsub{--c:#ff2d78}.tbtn.bits{--c:#ffd700}.tbtn.raid{--c:#ff6b35}
-  #test-fb{margin-top:12px;font-size:.78rem;color:#00ff88;min-height:1.2em;letter-spacing:1px}
-  .chat-frame{width:100%;height:400px;border:1px solid #3d0080;border-radius:4px;background:#080012;display:block}
-  .t-form{display:grid;grid-template-columns:1fr 1fr auto auto;gap:8px;align-items:center;margin-top:4px}
-  .t-input{background:#080012;border:1px solid #3d0080;border-radius:4px;padding:7px 10px;color:#e0c3ff;font-family:'Share Tech Mono',monospace;font-size:.8rem;width:100%}
+  #test-fb{margin-top:10px;font-size:.72rem;color:#00ff88;min-height:1.1em;letter-spacing:1px}
+
+  /* ── Titles form ─────────────────────────────────────────────────── */
+  .t-form{display:grid;grid-template-columns:1fr 1fr auto auto;gap:7px;align-items:center;margin-top:4px}
+  .t-input{background:#080012;border:1px solid #3d0080;border-radius:4px;padding:6px 10px;color:#e0c3ff;font-family:'Share Tech Mono',monospace;font-size:.78rem;width:100%}
   .t-input:focus{outline:none;border-color:#7b2fff}
-  .t-color{width:36px;height:32px;border:1px solid #3d0080;border-radius:4px;background:#080012;cursor:pointer;padding:2px}
-  table{width:100%;border-collapse:collapse;margin-top:10px}
-  td{vertical-align:middle}
+  .t-color{width:34px;height:30px;border:1px solid #3d0080;border-radius:4px;background:#080012;cursor:pointer;padding:2px}
+  table{width:100%;border-collapse:collapse;margin-top:8px}
+  td{vertical-align:middle;font-size:.78rem}
 </style>
 </head><body>
 
-<h1>⚡ STREAM ASSETS</h1>
-<div class="sub">SETUP CONSOLE // EMENBLADE</div>
-
-<div class="layout">
-<div class="col-left">
-
-<div class="card">
-  <h2>Status</h2>
-  <p><span class="dot ${hasTokens ? 'green' : 'red'}"></span>${hasTokens ? 'Twitch connected' : 'Not connected — complete setup below'}</p>
-  <p><span class="dot ${cfg.clientId ? 'green' : 'red'}"></span>Client ID ${cfg.clientId ? 'configured' : 'missing (set TWITCH_CLIENT_ID env var)'}</p>
-  <p><span class="dot ${cfg.channel ? 'green' : 'red'}"></span>Channel: ${cfg.channel || 'missing (set TWITCH_CHANNEL env var)'}</p>
+<div class="header">
+  <div class="header-title">
+    <h1>⚡ DASHBOARD</h1>
+    <div class="sub">STREAM CONTROL // EMENBLADE</div>
+  </div>
+  <div class="header-status">
+    <div class="sitem"><div class="sdot ${hasTokens ? 'on' : 'off'}"></div>${hasTokens ? 'Twitch connected' : 'Not connected'}</div>
+    <div class="sitem"><div class="sdot ${cfg.clientId ? 'on' : 'off'}"></div>Client ID</div>
+    <div class="sitem"><div class="sdot ${cfg.channel ? 'on' : 'off'}"></div>${cfg.channel || 'no channel'}</div>
+  </div>
 </div>
 
 ${hasTokens ? `
-<div class="card">
-  <h2>OBS Browser Sources</h2>
-  <p>Alerts overlay — <strong>1920 × 300</strong>, transparent background, bottom of scene:</p>
-  <div class="url">${cfg.hostUrl}/alerts.html</div>
-  <p style="margin-top:14px">Chat overlay — <strong>380 × 700</strong>, transparent background, right side:</p>
-  <div class="url">${cfg.hostUrl}/chat.html</div>
-</div>
-
-<div class="card">
-  <h2>Test Alerts</h2>
-  <p>Fire a test alert to your OBS Browser Source. Make sure it's open first.</p>
-  <div class="test-grid">
-    <button class="tbtn follow" onclick="test('follow')">Follow</button>
-    <button class="tbtn sub"    onclick="test('sub')">Sub</button>
-    <button class="tbtn resub"  onclick="test('resub')">Resub</button>
-    <button class="tbtn giftsub" onclick="test('giftsub')">Gift Sub</button>
-    <button class="tbtn bits"   onclick="test('bits')">Bits</button>
-    <button class="tbtn raid"   onclick="test('raid')">Raid</button>
-  </div>
-  <div id="test-fb"></div>
-</div>
-
-<div class="card">
-  <h2>Re-authorize</h2>
-  <p>Use this if you need to re-connect your Twitch account.</p>
-  <a class="btn" href="${authUrl}">Re-connect Twitch</a>
-</div>
-` : `
-<div class="card">
-  <h2>Step 1 — Twitch Developer App</h2>
-  <p>Go to <a href="https://dev.twitch.tv/console/apps" target="_blank">dev.twitch.tv/console/apps</a> and open your app (or create one).</p>
-  <p>Under <strong>OAuth Redirect URLs</strong>, add exactly this URL:</p>
-  <div class="url">${cfg.redirectUri}</div>
-  <p>Save the app. Make sure <strong>TWITCH_CLIENT_ID</strong> and <strong>TWITCH_CLIENT_SECRET</strong> in Unraid match your app's credentials.</p>
-</div>
-
-<div class="card">
-  <h2>Step 2 — Connect Twitch</h2>
-  <p>Click below and sign in as <strong>${cfg.channel || 'your channel'}</strong>. This grants the alerts server permission to read channel events.</p>
-  <a class="btn" href="${authUrl}">Connect with Twitch</a>
-</div>
-`}
-
-</div><!-- col-left -->
-<div class="col-right">
-  <div class="card" style="padding:16px">
+<div class="main-row">
+  <div class="card" style="flex:0 0 360px;padding:14px">
     <h2>Chat Preview</h2>
     <iframe id="chat-preview" src="/chat.html" class="chat-frame" frameborder="0"></iframe>
   </div>
-
-  <div class="card">
-    <h2>Custom User Titles</h2>
-    <p>Give specific chatters a named badge next to their name.</p>
-    <form class="t-form" onsubmit="addTitle(event)">
-      <input id="t-user"  class="t-input" placeholder="username" autocomplete="off" spellcheck="false">
-      <input id="t-label" class="t-input" placeholder="title" autocomplete="off" spellcheck="false">
-      <input id="t-color" class="t-color" type="color" value="#bf00ff" title="Badge color">
-      <button type="submit" class="btn" style="padding:7px 14px;margin:0;font-size:.7rem">Add</button>
-    </form>
-    <table><tbody id="titles-tbody"></tbody></table>
+  <div class="col-right">
+    <div class="card" style="padding:14px">
+      <h2>Event Feed</h2>
+      <div id="event-feed"><div class="ev-empty">Waiting for events...</div></div>
+    </div>
+    <div class="card">
+      <h2>Custom User Titles</h2>
+      <p>Give specific chatters a named badge next to their name.</p>
+      <form class="t-form" onsubmit="addTitle(event)">
+        <input id="t-user"  class="t-input" placeholder="username" autocomplete="off" spellcheck="false">
+        <input id="t-label" class="t-input" placeholder="title" autocomplete="off" spellcheck="false">
+        <input id="t-color" class="t-color" type="color" value="#bf00ff" title="Badge color">
+        <button type="submit" class="btn" style="padding:6px 14px;margin:0;font-size:.65rem">Add</button>
+      </form>
+      <table><tbody id="titles-tbody"></tbody></table>
+    </div>
   </div>
-</div><!-- col-right -->
-</div><!-- layout -->
+</div>
+
+<div class="bottom-row">
+  <div class="card">
+    <h2>OBS Browser Sources</h2>
+    <p>Alerts overlay — <strong>1920 × 300</strong>, transparent, bottom of scene:</p>
+    <div class="url">${cfg.hostUrl}/alerts.html</div>
+    <p style="margin-top:10px">Chat overlay — <strong>380 × 700</strong>, transparent, right side:</p>
+    <div class="url">${cfg.hostUrl}/chat.html</div>
+  </div>
+  <div class="card">
+    <h2>Test Alerts</h2>
+    <p>Fire a test alert to your OBS overlay. Make sure it's open first.</p>
+    <div class="test-grid">
+      <button class="tbtn follow"  onclick="test('follow')">Follow</button>
+      <button class="tbtn sub"     onclick="test('sub')">Sub</button>
+      <button class="tbtn resub"   onclick="test('resub')">Resub</button>
+      <button class="tbtn giftsub" onclick="test('giftsub')">Gift Sub</button>
+      <button class="tbtn bits"    onclick="test('bits')">Bits</button>
+      <button class="tbtn raid"    onclick="test('raid')">Raid</button>
+    </div>
+    <div id="test-fb"></div>
+  </div>
+  <div class="card">
+    <h2>Re-authorize</h2>
+    <p>Use this if you need to re-connect your Twitch account.</p>
+    <a class="btn" href="${authUrl}">Re-connect Twitch</a>
+  </div>
+</div>
+` : `
+<div style="display:flex;flex-direction:column;gap:16px;max-width:600px">
+  <div class="card">
+    <h2>Step 1 — Twitch Developer App</h2>
+    <p>Go to <a href="https://dev.twitch.tv/console/apps" target="_blank">dev.twitch.tv/console/apps</a> and open your app (or create one).</p>
+    <p>Under <strong>OAuth Redirect URLs</strong>, add exactly this URL:</p>
+    <div class="url">${cfg.redirectUri}</div>
+    <p>Save the app. Make sure <strong>TWITCH_CLIENT_ID</strong> and <strong>TWITCH_CLIENT_SECRET</strong> match your app's credentials.</p>
+  </div>
+  <div class="card">
+    <h2>Step 2 — Connect Twitch</h2>
+    <p>Click below and sign in as <strong>${cfg.channel || 'your channel'}</strong>.</p>
+    <a class="btn" href="${authUrl}">Connect with Twitch</a>
+  </div>
+</div>
+`}
 
 <script>
+function escHtml(s) {
+  return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Test alerts ────────────────────────────────────────────────────
 async function test(type) {
   const fb = document.getElementById('test-fb');
   fb.textContent = 'Sending ' + type + '...';
   try {
     const r = await fetch('/test/' + type);
     const d = await r.json();
-    fb.textContent = d.ok ? '✓ ' + type + ' alert sent' : '✗ ' + (d.error || 'error');
-  } catch(e) {
-    fb.textContent = '✗ Request failed';
-  }
+    fb.textContent = d.ok ? '\\u2713 ' + type + ' alert sent' : '\\u2717 ' + (d.error || 'error');
+  } catch { fb.textContent = '\\u2717 Request failed'; }
   setTimeout(() => fb.textContent = '', 3000);
 }
 
@@ -469,24 +524,20 @@ async function test(type) {
 async function loadTitlesUI() {
   const titles = await fetch('/titles').then(r => r.json()).catch(() => ({}));
   const tbody = document.getElementById('titles-tbody');
+  if (!tbody) return;
   tbody.innerHTML = '';
   const entries = Object.entries(titles);
   if (!entries.length) {
-    tbody.innerHTML = '<tr><td colspan="3" style="color:#7b2fff;opacity:.5;padding:10px 0;font-size:.8rem">No custom titles yet.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="3" style="color:#7b2fff;opacity:.5;padding:8px 0">No custom titles yet.</td></tr>';
     return;
   }
   for (const [username, {label, color}] of entries) {
     const tr = document.createElement('tr');
-    tr.innerHTML = \`<td style="padding:5px 8px 5px 0;color:#e0c3ff">\${username}</td>
-      <td style="padding:5px 8px"><span style="color:\${color};border:1px solid \${color};padding:1px 6px;border-radius:2px;font-size:10px">\${label}</span></td>
-      <td style="padding:5px 0;text-align:right"><button onclick="removeTitle('\${username}')" style="background:transparent;border:1px solid #ff2d78;color:#ff2d78;border-radius:3px;padding:2px 8px;cursor:pointer;font-family:inherit;font-size:.7rem">Remove</button></td>\`;
+    tr.innerHTML = \`<td style="padding:4px 8px 4px 0;color:#e0c3ff">\${escHtml(username)}</td>
+      <td style="padding:4px 8px"><span style="color:\${escHtml(color)};border:1px solid \${escHtml(color)};padding:1px 6px;border-radius:2px;font-size:10px">\${escHtml(label)}</span></td>
+      <td style="padding:4px 0;text-align:right"><button onclick="removeTitle('\${escHtml(username)}')" style="background:transparent;border:1px solid #ff2d78;color:#ff2d78;border-radius:3px;padding:2px 8px;cursor:pointer;font-family:inherit;font-size:.68rem">Remove</button></td>\`;
     tbody.appendChild(tr);
   }
-}
-
-function reloadChatPreview() {
-  const f = document.getElementById('chat-preview');
-  f.src = f.src;
 }
 
 async function addTitle(e) {
@@ -499,30 +550,64 @@ async function addTitle(e) {
   document.getElementById('t-user').value = '';
   document.getElementById('t-label').value = '';
   loadTitlesUI();
-  reloadChatPreview();
 }
 
 async function removeTitle(username) {
   await fetch('/titles/' + encodeURIComponent(username), { method:'DELETE' });
   loadTitlesUI();
-  reloadChatPreview();
 }
 
-loadTitlesUI();
+// ── Event feed ─────────────────────────────────────────────────────
+function ts() {
+  const d = new Date();
+  return [d.getHours(), d.getMinutes(), d.getSeconds()].map(n => String(n).padStart(2,'0')).join(':');
+}
+
+function addFeedEvent(data) {
+  const feed = document.getElementById('event-feed');
+  if (!feed) return;
+  const empty = feed.querySelector('.ev-empty');
+  if (empty) empty.remove();
+  const row = document.createElement('div');
+  row.className = 'ev-row';
+  const inputHtml = data.input ? \` <span class="ev-input">&ldquo;\${escHtml(data.input)}&rdquo;</span>\` : '';
+  const cost = data.cost ? \` <span style="color:#4a2080">(\${Number(data.cost).toLocaleString()} pts)</span>\` : '';
+  row.innerHTML = \`<span class="ev-time">\${ts()}</span><span class="ev-user">\${escHtml(data.user)}</span><span class="ev-detail">redeemed \${escHtml(data.reward)}\${cost}</span>\${inputHtml}\`;
+  feed.appendChild(row);
+  feed.scrollTop = feed.scrollHeight;
+}
+
+(function connectFeedWs() {
+  const ws = new WebSocket(\`ws://\${location.host}/chat-ws\`);
+  ws.onmessage = e => { try { const m = JSON.parse(e.data); if (m.type === 'redemption') addFeedEvent(m); } catch {} };
+  ws.onclose = () => setTimeout(connectFeedWs, 3000);
+  ws.onerror = () => ws.close();
+})();
+
+if (document.getElementById('titles-tbody')) loadTitlesUI();
 </script>
 
 </body></html>`;
 }
 
 // ── Start ─────────────────────────────────────────────────────────────────────
-const server = http.createServer(app);
-const wss    = new WebSocketServer({ server, path: '/ws' });
+const server   = http.createServer(app);
+const wss      = new WebSocketServer({ server, path: '/ws' });
+const chatWss  = new WebSocketServer({ server, path: '/chat-ws' });
 
 wss.on('connection', (ws) => {
   obsClients.add(ws);
   console.log(`OBS client connected (total: ${obsClients.size})`);
   ws.on('close',  () => { obsClients.delete(ws); console.log(`OBS client disconnected (total: ${obsClients.size})`); });
   ws.on('error',  () => obsClients.delete(ws));
+});
+
+chatWss.on('connection', (ws) => {
+  chatClients.add(ws);
+  // Send current titles immediately so the client is in sync on connect
+  ws.send(JSON.stringify({ type: 'titles_update', titles: loadTitles() }));
+  ws.on('close', () => chatClients.delete(ws));
+  ws.on('error', () => chatClients.delete(ws));
 });
 
 server.listen(cfg.port, async () => {

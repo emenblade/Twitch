@@ -155,6 +155,7 @@
     .badge-vip            { color: #bf00ff; }
     .badge-subscriber     { color: #7b2fff; }
 
+
     /* ── Name ────────────────────────────────────────────────────── */
     .name {
       font-size: 12px;
@@ -396,12 +397,26 @@ async function getChannel() {
   }
 }
 
+// ── Control WebSocket (live title updates from server) ────────────
+function connectControlWs() {
+  const ws = new WebSocket(`ws://${location.host}/chat-ws`);
+  ws.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'titles_update') CUSTOM_TITLES = msg.titles;
+    } catch {}
+  };
+  ws.onclose = () => setTimeout(connectControlWs, 3000);
+  ws.onerror = () => ws.close();
+}
+
+connectControlWs();
+
 async function connect() {
   const channel = await getChannel();
   if (!channel) { console.error('No channel configured.'); return; }
 
-  // Load custom titles + BTTV/7TV emotes (fire and forget)
-  try { CUSTOM_TITLES = await fetch('/titles').then(r => r.json()); } catch {}
+  // Load BTTV/7TV emotes (fire and forget)
   try {
     const status = await fetch('/status').then(r => r.json());
     loadThirdPartyEmotes(status.broadcaster_id || null);
