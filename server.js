@@ -387,17 +387,17 @@ function setupPageHtml(hasTokens, authUrl) {
   /* ── Layout rows ─────────────────────────────────────────────────── */
   .main-row{display:flex;gap:16px;margin-bottom:16px;align-items:flex-start}
   .bottom-row{display:flex;gap:16px;align-items:flex-start}
-  .col-right{flex:1;display:flex;flex-direction:column;gap:16px;min-width:0}
+  .col-left{flex:0 0 300px;display:flex;flex-direction:column;gap:16px;min-width:0}
 
   /* ── Chat iframe ─────────────────────────────────────────────────── */
-  .chat-frame{width:100%;height:500px;border:1px solid #3d0080;border-radius:4px;background:#080012;display:block}
+  .chat-frame{width:100%;height:560px;border:1px solid #3d0080;border-radius:4px;background:#080012;display:block}
 
   /* ── Event feed ──────────────────────────────────────────────────── */
-  #event-feed{height:500px;overflow-y:auto;display:flex;flex-direction:column;gap:5px;scrollbar-width:thin;scrollbar-color:#3d0080 transparent}
+  #event-feed{height:340px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;background:#080012;border-radius:4px;padding:8px;scrollbar-width:thin;scrollbar-color:#3d0080 transparent}
   #event-feed::-webkit-scrollbar{width:4px}
   #event-feed::-webkit-scrollbar-thumb{background:#3d0080;border-radius:2px}
-  .ev-empty{color:#3d0080;font-size:.75rem;padding:8px 0}
-  .ev-row{display:flex;align-items:baseline;gap:8px;padding:5px 10px;background:#080012;border-left:2px solid #ffd700;border-radius:0 4px 4px 0;font-size:.75rem;flex-shrink:0}
+  .ev-empty{color:#3d0080;font-size:.75rem;padding:4px 2px}
+  .ev-row{display:flex;align-items:baseline;gap:8px;padding:5px 8px;border-left:2px solid #ffd700;border-radius:0 3px 3px 0;font-size:.75rem;flex-shrink:0;background:rgba(255,215,0,0.04)}
   .ev-time{color:#4a2080;flex-shrink:0;font-size:.68rem;font-variant-numeric:tabular-nums}
   .ev-user{color:#ffd700;font-weight:bold;flex-shrink:0}
   .ev-detail{color:rgba(255,215,0,.65)}
@@ -436,11 +436,7 @@ function setupPageHtml(hasTokens, authUrl) {
 
 ${hasTokens ? `
 <div class="main-row">
-  <div class="card" style="flex:0 0 360px;padding:14px">
-    <h2>Chat Preview</h2>
-    <iframe id="chat-preview" src="/chat.html" class="chat-frame" frameborder="0"></iframe>
-  </div>
-  <div class="col-right">
+  <div class="col-left">
     <div class="card" style="padding:14px">
       <h2>Event Feed</h2>
       <div id="event-feed"><div class="ev-empty">Waiting for events...</div></div>
@@ -456,6 +452,10 @@ ${hasTokens ? `
       </form>
       <table><tbody id="titles-tbody"></tbody></table>
     </div>
+  </div>
+  <div class="card" style="flex:1;padding:14px">
+    <h2>Chat Preview</h2>
+    <iframe id="chat-preview" src="/chat.html" class="chat-frame" frameborder="0"></iframe>
   </div>
 </div>
 
