@@ -49,20 +49,6 @@
     Mask="false">/mnt/user/appdata/stream-assets</Config>
 
   <!-- ═══════════════════════════════════════════════════════════════
-       MEDIA VOLUME
-  ════════════════════════════════════════════════════════════════ -->\
-  <Config
-    Name="Media Path"
-    Target="/StreamAssets/media"
-    Default="/mnt/user/appdata/stream-assets/media"
-    Mode="rw"
-    Description="Persistent storage for alert sounds and custom command media files (audio/video). Drop files here or upload them via the dashboard. Survives container restarts and image updates."
-    Type="Path"
-    Display="always"
-    Required="true"
-    Mask="false">/mnt/user/appdata/stream-assets/media</Config>
-
-  <!-- ═══════════════════════════════════════════════════════════════
        REQUIRED — fill these in before starting the container
   ════════════════════════════════════════════════════════════════ -->
   <Config
@@ -179,17 +165,6 @@
     Default="/app/data"
     Mode=""
     Description="Path inside the container where tokens are stored. Leave blank to use the default (/app/data)."
-    Type="Variable"
-    Display="advanced"
-    Required="false"
-    Mask="false"></Config>
-
-  <Config
-    Name="Media Directory (internal)"
-    Target="MEDIA_DIR"
-    Default="/StreamAssets/media"
-    Mode=""
-    Description="Path inside the container where alert sounds and custom command media files are stored. Must match the container-side path of the Media Path volume above. Leave blank to use the default (/StreamAssets/media)."
     Type="Variable"
     Display="advanced"
     Required="false"
