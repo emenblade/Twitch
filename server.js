@@ -178,6 +178,10 @@ function parseChatTags(raw, ircNick = '') {
     } else if (part.startsWith('display-name=')) {
       const dn = part.slice(13);
       if (dn) displayName = dn;
+    } else if (part === 'mod=1') {
+      badgeSet.add('moderator');
+    } else if (part === 'user-type=mod') {
+      badgeSet.add('moderator');
     }
   }
   return { badgeSet, username: ircNick.toLowerCase(), displayName };
