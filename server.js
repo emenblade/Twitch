@@ -704,8 +704,24 @@ if (document.getElementById('sstat-follow')) loadSoundsUI();
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 const server   = http.createServer(app);
-const wss      = new WebSocketServer({ server, path: '/ws',      perMessageDeflate: false });
-const chatWss  = new WebSocketServer({ server, path: '/chat-ws', perMessageDeflate: false });
+
+// Use noServer + manual routing so multiple WSS instances don't conflict.
+// When both share { server }, each WSS fires for every upgrade — the one
+// whose path doesn't match calls abortHandshake(), corrupting the already-
+// upgraded socket and causing "Invalid frame header" on the client.
+const wss     = new WebSocketServer({ noServer: true, perMessageDeflate: false });
+const chatWss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
+
+server.on('upgrade', (request, socket, head) => {
+  const { pathname } = new URL(request.url, `http://${request.headers.host}`);
+  if (pathname === '/ws') {
+    wss.handleUpgrade(request, socket, head, (ws) => wss.emit('connection', ws, request));
+  } else if (pathname === '/chat-ws') {
+    chatWss.handleUpgrade(request, socket, head, (ws) => chatWss.emit('connection', ws, request));
+  } else {
+    socket.destroy();
+  }
+});
 
 wss.on('connection', (ws) => {
   obsClients.add(ws);
