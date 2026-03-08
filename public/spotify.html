@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Now Playing</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      width: 500px;
+      height: 140px;
+      overflow: hidden;
+      background: transparent;
+    }
+
+    #spotify-wrap {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 500px;
+      height: 140px;
+    }
+
+    /* ── Panel ───────────────────────────────────────────────────── */
+    .panel {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(135deg, rgba(13,0,26,0.97) 0%, rgba(26,0,51,0.97) 60%, rgba(45,0,80,0.97) 100%);
+      border: 1px solid #1DB954;
+      border-left: 4px solid #1DB954;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 16px 18px;
+      transform: translateX(-110%);
+      opacity: 0;
+      box-shadow:
+        0 0 0 1px rgba(0,0,0,0.8),
+        0 0 25px -5px #1DB954,
+        inset 0 0 30px rgba(0,0,0,0.5);
+      overflow: hidden;
+    }
+
+    /* Scan-line overlay */
+    .panel::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0, 0, 0, 0.12) 2px,
+        rgba(0, 0, 0, 0.12) 4px
+      );
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    /* Top-right corner bracket */
+    .panel::after {
+      content: '';
+      position: absolute;
+      top: 6px; right: 6px;
+      width: 12px; height: 12px;
+      border-top: 2px solid #1DB954;
+      border-right: 2px solid #1DB954;
+      opacity: 0.7;
+    }
+
+    /* Bottom-left corner bracket */
+    .corner-bl {
+      position: absolute;
+      bottom: 6px; left: 6px;
+      width: 12px; height: 12px;
+      border-bottom: 2px solid #1DB954;
+      border-left: 2px solid #1DB954;
+      opacity: 0.7;
+      z-index: 2;
+    }
+
+    /* ── Animations ──────────────────────────────────────────────── */
+    @keyframes slideIn {
+      0%   { transform: translateX(-110%); opacity: 0; }
+      60%  { transform: translateX(8px);   opacity: 1; }
+      80%  { transform: translateX(-4px); }
+      100% { transform: translateX(0);     opacity: 1; }
+    }
+
+    @keyframes slideOut {
+      0%   { transform: translateX(0);      opacity: 1; }
+      20%  { transform: translateX(10px);   opacity: 1; }
+      100% { transform: translateX(-110%);  opacity: 0; }
+    }
+
+    @keyframes borderPulse {
+      0%, 100% { box-shadow: 0 0 0 1px rgba(0,0,0,0.8), 0 0 25px -5px #1DB954, inset 0 0 30px rgba(0,0,0,0.5); }
+      50%       { box-shadow: 0 0 0 1px rgba(0,0,0,0.8), 0 0 40px -2px #1DB954, inset 0 0 30px rgba(0,0,0,0.5); }
+    }
+
+    @keyframes artGlow {
+      0%, 100% { box-shadow: 0 0 10px 2px rgba(29,185,84,0.5); }
+      50%       { box-shadow: 0 0 20px 6px rgba(29,185,84,0.75); }
+    }
+
+    .panel.show {
+      animation:
+        slideIn 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards,
+        borderPulse 2s ease-in-out 0.5s infinite;
+    }
+
+    .panel.hide {
+      animation: slideOut 0.4s ease-in forwards;
+    }
+
+    /* ── Album art ───────────────────────────────────────────────── */
+    .album-art {
+      flex-shrink: 0;
+      width: 80px;
+      height: 80px;
+      border-radius: 4px;
+      object-fit: cover;
+      background: #0d0015;
+      border: 1px solid #1DB954;
+      animation: artGlow 2s ease-in-out 0.5s infinite;
+      z-index: 2;
+    }
+
+    .album-placeholder {
+      flex-shrink: 0;
+      width: 80px;
+      height: 80px;
+      border-radius: 4px;
+      background: #0d0015;
+      border: 1px solid #1DB954;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 28px;
+      animation: artGlow 2s ease-in-out 0.5s infinite;
+      z-index: 2;
+    }
+
+    /* ── Content ─────────────────────────────────────────────────── */
+    .content {
+      flex: 1;
+      min-width: 0;
+      z-index: 2;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .now-playing-label {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      color: #1DB954;
+      text-shadow: 0 0 10px #1DB954;
+    }
+
+    .track-title {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 17px;
+      font-weight: 700;
+      color: #ffffff;
+      text-shadow: 0 0 12px rgba(255,255,255,0.4);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .track-artist {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 12px;
+      color: #c9a0dc;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      opacity: 0.9;
+    }
+
+    /* ── Progress bar ────────────────────────────────────────────── */
+    .progress-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-top: 4px;
+    }
+
+    .progress-bar-bg {
+      width: 100%;
+      height: 3px;
+      background: rgba(29, 185, 84, 0.2);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      background: #1DB954;
+      border-radius: 2px;
+      width: 0%;
+      box-shadow: 0 0 6px #1DB954;
+      transition: width 0.25s linear;
+    }
+
+    .progress-times {
+      display: flex;
+      justify-content: space-between;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 10px;
+      color: #7b2fff;
+      letter-spacing: 1px;
+    }
+  </style>
+</head>
+<body>
+<div id="spotify-wrap">
+  <div class="panel" id="panel">
+    <div class="corner-bl"></div>
+    <img class="album-art" id="album-art" src="" alt="" style="display:none">
+    <div class="album-placeholder" id="album-placeholder">♪</div>
+    <div class="content">
+      <div class="now-playing-label">♪ NOW PLAYING</div>
+      <div class="track-title" id="track-title">—</div>
+      <div class="track-artist" id="track-artist">—</div>
+      <div class="progress-wrap">
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" id="progress-fill"></div>
+        </div>
+        <div class="progress-times">
+          <span id="time-elapsed">0:00</span>
+          <span id="time-total">0:00</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const panel       = document.getElementById('panel');
+const albumArt    = document.getElementById('album-art');
+const albumHolder = document.getElementById('album-placeholder');
+const trackTitle  = document.getElementById('track-title');
+const trackArtist = document.getElementById('track-artist');
+const progressFill = document.getElementById('progress-fill');
+const timeElapsed  = document.getElementById('time-elapsed');
+const timeTotal    = document.getElementById('time-total');
+
+let visible      = false;
+let hideTimer    = null;
+let rafId        = null;
+
+// Interpolation state
+let trackData    = null;   // latest message from server
+let receivedAt   = 0;      // Date.now() when we got the message
+
+function fmt(ms) {
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  return `${m}:${String(s % 60).padStart(2, '0')}`;
+}
+
+function showPanel() {
+  if (visible) return;
+  visible = true;
+  panel.classList.remove('hide');
+  panel.classList.add('show');
+}
+
+function hidePanel() {
+  if (!visible) return;
+  visible = false;
+  panel.classList.remove('show');
+  panel.classList.add('hide');
+}
+
+function scheduleHide(ms) {
+  clearTimeout(hideTimer);
+  hideTimer = setTimeout(hidePanel, ms);
+}
+
+function stopRaf() {
+  if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+}
+
+function startRaf() {
+  stopRaf();
+  function tick() {
+    if (!trackData) return;
+    const elapsed = trackData.is_playing
+      ? trackData.progress_ms + (Date.now() - receivedAt)
+      : trackData.progress_ms;
+    const clamped = Math.min(elapsed, trackData.duration_ms);
+    const pct     = trackData.duration_ms > 0 ? (clamped / trackData.duration_ms) * 100 : 0;
+    progressFill.style.width = pct + '%';
+    timeElapsed.textContent  = fmt(clamped);
+    rafId = requestAnimationFrame(tick);
+  }
+  rafId = requestAnimationFrame(tick);
+}
+
+function applyTrack(data) {
+  trackData   = data;
+  receivedAt  = Date.now();
+
+  // Update art
+  if (data.albumArt) {
+    albumArt.src = data.albumArt;
+    albumArt.style.display = 'block';
+    albumHolder.style.display = 'none';
+  } else {
+    albumArt.style.display = 'none';
+    albumHolder.style.display = 'flex';
+  }
+
+  trackTitle.textContent  = data.title  || '—';
+  trackArtist.textContent = data.artist || '—';
+  timeTotal.textContent   = fmt(data.duration_ms || 0);
+
+  clearTimeout(hideTimer);
+  hideTimer = null;
+
+  if (data.is_playing) {
+    showPanel();
+    startRaf();
+  } else {
+    // Paused — keep showing, but stop interpolating; hide after 30s
+    showPanel();
+    stopRaf();
+    // Still update display with current position
+    const pct = data.duration_ms > 0 ? (data.progress_ms / data.duration_ms) * 100 : 0;
+    progressFill.style.width = pct + '%';
+    timeElapsed.textContent  = fmt(data.progress_ms || 0);
+    scheduleHide(30000);
+  }
+}
+
+function handleMessage(data) {
+  if (data.type === 'now_playing') {
+    applyTrack(data);
+  } else if (data.type === 'stopped') {
+    stopRaf();
+    trackData = null;
+    scheduleHide(2000);
+  }
+}
+
+// ── WebSocket ─────────────────────────────────────────────────────
+function connect() {
+  const ws = new WebSocket(`ws://${location.host}/spotify-ws`);
+
+  ws.onmessage = (e) => {
+    try { handleMessage(JSON.parse(e.data)); } catch {}
+  };
+
+  ws.onclose = () => setTimeout(connect, 5000);
+  ws.onerror = () => ws.close();
+}
+
+connect();
+</script>
+</body>
+</html>

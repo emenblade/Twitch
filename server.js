@@ -19,6 +19,13 @@ const cfg = {
 };
 cfg.redirectUri = cfg.callbackUrl || `${cfg.hostUrl}/auth/callback`;
 
+// ── Spotify config ────────────────────────────────────────────────────────────
+const spotifyCfg = {
+  clientId:     process.env.SPOTIFY_CLIENT_ID     || '',
+  clientSecret: process.env.SPOTIFY_CLIENT_SECRET || '',
+  callbackUrl:  (process.env.SPOTIFY_CALLBACK_URL || '').replace(/\/$/, ''),
+};
+
 // ── Token storage ─────────────────────────────────────────────────────────────
 const tokensFile  = path.join(cfg.dataDir, 'tokens.json');
 const titlesFile  = path.join(cfg.dataDir, 'custom-titles.json');
@@ -50,6 +57,86 @@ function findSoundFile(type) {
     if (fs.existsSync(fp)) return { fp, ext };
   }
   return null;
+}
+
+// ── Spotify token storage + polling ───────────────────────────────────────────
+const spotifyTokensFile = path.join(cfg.dataDir, 'spotify-tokens.json');
+
+function loadSpotifyTokens() {
+  try { return JSON.parse(fs.readFileSync(spotifyTokensFile, 'utf8')); }
+  catch { return null; }
+}
+function saveSpotifyTokens(t) {
+  fs.mkdirSync(cfg.dataDir, { recursive: true });
+  fs.writeFileSync(spotifyTokensFile, JSON.stringify(t, null, 2));
+}
+
+async function refreshSpotifyToken() {
+  const t = loadSpotifyTokens();
+  if (!t?.refresh_token) throw new Error('No Spotify refresh token');
+  const res = await fetch('https://accounts.spotify.com/api/token', {
+    method: 'POST',
+    headers: {
+      'Content-Type':  'application/x-www-form-urlencoded',
+      'Authorization': 'Basic ' + Buffer.from(`${spotifyCfg.clientId}:${spotifyCfg.clientSecret}`).toString('base64'),
+    },
+    body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: t.refresh_token }),
+  });
+  if (!res.ok) throw new Error(`Spotify refresh failed: ${res.status} ${await res.text()}`);
+  const data = await res.json();
+  const updated = {
+    access_token:  data.access_token,
+    refresh_token: data.refresh_token || t.refresh_token,
+    expires_at:    Date.now() + data.expires_in * 1000,
+  };
+  saveSpotifyTokens(updated);
+  return updated.access_token;
+}
+
+async function getSpotifyToken() {
+  const t = loadSpotifyTokens();
+  if (!t) return null;
+  if (Date.now() > t.expires_at - 60_000) return refreshSpotifyToken();
+  return t.access_token;
+}
+
+let currentTrack = null;
+const spotifyClients = new Set();
+
+function broadcastSpotify(data) {
+  const msg = JSON.stringify(data);
+  spotifyClients.forEach(ws => { if (ws.readyState === WebSocket.OPEN) ws.send(msg); });
+}
+
+async function pollSpotify() {
+  if (!spotifyCfg.clientId) return;
+  try {
+    const token = await getSpotifyToken();
+    if (!token) return;
+    const res = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.status === 204 || res.status === 404) {
+      if (currentTrack !== null) { currentTrack = null; broadcastSpotify({ type: 'stopped' }); }
+      return;
+    }
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data?.item) return;
+    const track = {
+      type:        'now_playing',
+      title:       data.item.name,
+      artist:      data.item.artists.map(a => a.name).join(', '),
+      albumArt:    data.item.album.images[0]?.url ?? '',
+      duration_ms: data.item.duration_ms,
+      progress_ms: data.progress_ms,
+      is_playing:  data.is_playing,
+    };
+    broadcastSpotify(track);
+    currentTrack = track;
+  } catch (err) {
+    console.error('Spotify poll error:', err.message);
+  }
 }
 
 function loadTokens() {
@@ -272,6 +359,9 @@ setInterval(async () => {
   catch (err) { console.error('Scheduled token refresh failed:', err.message); }
 }, 2 * 60 * 60 * 1000);
 
+// Poll Spotify every 5 s (no-op if not configured)
+setInterval(pollSpotify, 5000);
+
 // ── Express routes ────────────────────────────────────────────────────────────
 const app = express();
 app.use(express.static(path.join(__dirname, 'public')));
@@ -382,6 +472,43 @@ app.delete('/sounds/:type', (req, res) => {
   res.json({ ok: true });
 });
 
+// ── Spotify OAuth ──────────────────────────────────────────────────────────────
+app.get('/auth/spotify', (_req, res) => {
+  if (!spotifyCfg.clientId) return res.send(errorPage('SPOTIFY_CLIENT_ID not set'));
+  const redirectUri = spotifyCfg.callbackUrl || `${cfg.hostUrl}/auth/spotify/callback`;
+  res.redirect('https://accounts.spotify.com/authorize?' + new URLSearchParams({
+    client_id:     spotifyCfg.clientId,
+    redirect_uri:  redirectUri,
+    response_type: 'code',
+    scope:         'user-read-currently-playing user-read-playback-state',
+    state:          crypto.randomBytes(16).toString('hex'),
+  }));
+});
+
+app.get('/auth/spotify/callback', async (req, res) => {
+  const { code, error } = req.query;
+  if (error || !code) return res.send(errorPage(`Spotify OAuth error: ${error ?? 'no code'}`));
+  const redirectUri = spotifyCfg.callbackUrl || `${cfg.hostUrl}/auth/spotify/callback`;
+  const tokenRes = await fetch('https://accounts.spotify.com/api/token', {
+    method: 'POST',
+    headers: {
+      'Content-Type':  'application/x-www-form-urlencoded',
+      'Authorization': 'Basic ' + Buffer.from(`${spotifyCfg.clientId}:${spotifyCfg.clientSecret}`).toString('base64'),
+    },
+    body: new URLSearchParams({ grant_type: 'authorization_code', code, redirect_uri: redirectUri }),
+  });
+  if (!tokenRes.ok) return res.send(errorPage(`Spotify token exchange failed: ${await tokenRes.text()}`));
+  const tokens = await tokenRes.json();
+  saveSpotifyTokens({
+    access_token:  tokens.access_token,
+    refresh_token: tokens.refresh_token,
+    expires_at:    Date.now() + tokens.expires_in * 1000,
+  });
+  console.log('Spotify auth complete');
+  pollSpotify();
+  res.send('<script>window.location="/setup"</script>');
+});
+
 app.get('/status', (_req, res) => {
   res.json({
     configured:         !!(cfg.clientId && cfg.clientSecret && cfg.channel),
@@ -390,6 +517,9 @@ app.get('/status', (_req, res) => {
     obs_clients:        obsClients.size,
     channel:            cfg.channel,
     broadcaster_id:     broadcasterId || null,
+    spotify_configured: !!spotifyCfg.clientId,
+    spotify_connected:  !!loadSpotifyTokens(),
+    current_track:      currentTrack,
   });
 });
 
@@ -540,6 +670,23 @@ ${hasTokens ? `
     <h2>Re-authorize</h2>
     <p>Use this if you need to re-connect your Twitch account.</p>
     <a class="btn" href="${authUrl}">Re-connect Twitch</a>
+  </div>
+  <div class="card">
+    <h2>Spotify Now Playing</h2>
+    <div class="sitem" style="margin-bottom:10px">
+      <div class="sdot ${loadSpotifyTokens() ? 'on' : 'off'}"></div>
+      <span style="color:${loadSpotifyTokens() ? '#00ff88' : '#ff2d78'}">${loadSpotifyTokens() ? 'Connected' : 'Not connected'}</span>
+    </div>
+    ${loadSpotifyTokens() ? `
+    <p>Add this as a Browser Source in OBS:</p>
+    <div class="url">${cfg.hostUrl}/spotify.html</div>
+    <p style="margin-top:6px;font-size:.75rem;color:#7b2fff">500 × 140, transparent</p>
+    ` : `
+    <p>Set these env vars first, then connect:</p>
+    <p style="font-size:.75rem;color:#7b2fff;line-height:1.8">SPOTIFY_CLIENT_ID<br>SPOTIFY_CLIENT_SECRET<br>SPOTIFY_CALLBACK_URL</p>
+    <a class="btn" href="/auth/spotify" style="margin-top:8px;display:inline-block">Connect Spotify</a>
+    `}
+    <a class="btn" href="/auth/spotify" style="margin-top:8px;display:inline-block;background:linear-gradient(135deg,#0f7a3a,#1DB954)">Re-connect Spotify</a>
   </div>
 </div>
 
@@ -709,8 +856,9 @@ const server   = http.createServer(app);
 // When both share { server }, each WSS fires for every upgrade — the one
 // whose path doesn't match calls abortHandshake(), corrupting the already-
 // upgraded socket and causing "Invalid frame header" on the client.
-const wss     = new WebSocketServer({ noServer: true, perMessageDeflate: false });
-const chatWss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
+const wss        = new WebSocketServer({ noServer: true, perMessageDeflate: false });
+const chatWss    = new WebSocketServer({ noServer: true, perMessageDeflate: false });
+const spotifyWss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
 
 server.on('upgrade', (request, socket, head) => {
   const { pathname } = new URL(request.url, `http://${request.headers.host}`);
@@ -718,6 +866,8 @@ server.on('upgrade', (request, socket, head) => {
     wss.handleUpgrade(request, socket, head, (ws) => wss.emit('connection', ws, request));
   } else if (pathname === '/chat-ws') {
     chatWss.handleUpgrade(request, socket, head, (ws) => chatWss.emit('connection', ws, request));
+  } else if (pathname === '/spotify-ws') {
+    spotifyWss.handleUpgrade(request, socket, head, (ws) => spotifyWss.emit('connection', ws, request));
   } else {
     socket.destroy();
   }
@@ -736,6 +886,13 @@ chatWss.on('connection', (ws) => {
   ws.send(JSON.stringify({ type: 'titles_update', titles: loadTitles() }));
   ws.on('close', () => chatClients.delete(ws));
   ws.on('error', () => chatClients.delete(ws));
+});
+
+spotifyWss.on('connection', (ws) => {
+  spotifyClients.add(ws);
+  if (currentTrack) ws.send(JSON.stringify(currentTrack));
+  ws.on('close', () => spotifyClients.delete(ws));
+  ws.on('error', () => spotifyClients.delete(ws));
 });
 
 server.listen(cfg.port, async () => {
