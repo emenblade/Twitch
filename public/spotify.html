@@ -29,8 +29,8 @@
       width: 100%;
       height: 100%;
       background: linear-gradient(135deg, rgba(13,0,26,0.97) 0%, rgba(26,0,51,0.97) 60%, rgba(45,0,80,0.97) 100%);
-      border: 1px solid #1DB954;
-      border-left: 4px solid #1DB954;
+      border: 1px solid rgba(29,185,84,0.3);
+      border-left: 2px solid rgba(29,185,84,0.5);
       border-radius: 6px;
       display: flex;
       align-items: center;
@@ -40,7 +40,7 @@
       opacity: 0;
       box-shadow:
         0 0 0 1px rgba(0,0,0,0.8),
-        0 0 25px -5px #1DB954,
+        0 0 14px -6px rgba(29,185,84,0.35),
         inset 0 0 30px rgba(0,0,0,0.5);
       overflow: hidden;
     }
@@ -67,8 +67,8 @@
       position: absolute;
       top: 6px; right: 6px;
       width: 12px; height: 12px;
-      border-top: 2px solid #1DB954;
-      border-right: 2px solid #1DB954;
+      border-top: 1px solid rgba(29,185,84,0.4);
+      border-right: 1px solid rgba(29,185,84,0.4);
       opacity: 0.7;
     }
 
@@ -77,8 +77,8 @@
       position: absolute;
       bottom: 6px; left: 6px;
       width: 12px; height: 12px;
-      border-bottom: 2px solid #1DB954;
-      border-left: 2px solid #1DB954;
+      border-bottom: 1px solid rgba(29,185,84,0.4);
+      border-left: 1px solid rgba(29,185,84,0.4);
       opacity: 0.7;
       z-index: 2;
     }
@@ -98,13 +98,13 @@
     }
 
     @keyframes borderPulse {
-      0%, 100% { box-shadow: 0 0 0 1px rgba(0,0,0,0.8), 0 0 25px -5px #1DB954, inset 0 0 30px rgba(0,0,0,0.5); }
-      50%       { box-shadow: 0 0 0 1px rgba(0,0,0,0.8), 0 0 40px -2px #1DB954, inset 0 0 30px rgba(0,0,0,0.5); }
+      0%, 100% { box-shadow: 0 0 0 1px rgba(0,0,0,0.8), 0 0 14px -6px rgba(29,185,84,0.35), inset 0 0 30px rgba(0,0,0,0.5); }
+      50%       { box-shadow: 0 0 0 1px rgba(0,0,0,0.8), 0 0 20px -4px rgba(29,185,84,0.45), inset 0 0 30px rgba(0,0,0,0.5); }
     }
 
     @keyframes artGlow {
-      0%, 100% { box-shadow: 0 0 10px 2px rgba(29,185,84,0.5); }
-      50%       { box-shadow: 0 0 20px 6px rgba(29,185,84,0.75); }
+      0%, 100% { box-shadow: 0 0 8px 1px rgba(29,185,84,0.25); }
+      50%       { box-shadow: 0 0 14px 3px rgba(29,185,84,0.4); }
     }
 
     .panel.show {
@@ -125,7 +125,7 @@
       border-radius: 4px;
       object-fit: cover;
       background: #0d0015;
-      border: 1px solid #1DB954;
+      border: 1px solid rgba(29,185,84,0.35);
       animation: artGlow 2s ease-in-out 0.5s infinite;
       z-index: 2;
     }
@@ -136,7 +136,7 @@
       height: 80px;
       border-radius: 4px;
       background: #0d0015;
-      border: 1px solid #1DB954;
+      border: 1px solid rgba(29,185,84,0.35);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -161,7 +161,7 @@
       letter-spacing: 4px;
       text-transform: uppercase;
       color: #1DB954;
-      text-shadow: 0 0 10px #1DB954;
+      text-shadow: 0 0 8px rgba(29,185,84,0.4);
     }
 
     .track-title {
@@ -253,9 +253,10 @@ const progressFill = document.getElementById('progress-fill');
 const timeElapsed  = document.getElementById('time-elapsed');
 const timeTotal    = document.getElementById('time-total');
 
-let visible      = false;
-let hideTimer    = null;
-let rafId        = null;
+let visible       = false;
+let hideTimer     = null;
+let rafId         = null;
+let currentTitle  = null;  // track song changes
 
 // Interpolation state
 let trackData    = null;   // latest message from server
@@ -307,10 +308,12 @@ function startRaf() {
 }
 
 function applyTrack(data) {
-  trackData   = data;
-  receivedAt  = Date.now();
+  const songChanged = data.title !== currentTitle;
+  currentTitle = data.title;
+  trackData    = data;
+  receivedAt   = Date.now();
 
-  // Update art
+  // Update content regardless of visibility
   if (data.albumArt) {
     albumArt.src = data.albumArt;
     albumArt.style.display = 'block';
@@ -319,26 +322,25 @@ function applyTrack(data) {
     albumArt.style.display = 'none';
     albumHolder.style.display = 'flex';
   }
-
   trackTitle.textContent  = data.title  || '—';
   trackArtist.textContent = data.artist || '—';
   timeTotal.textContent   = fmt(data.duration_ms || 0);
 
-  clearTimeout(hideTimer);
-  hideTimer = null;
-
   if (data.is_playing) {
-    showPanel();
     startRaf();
+    if (songChanged) {
+      // New song — slide in, auto-hide after 15s
+      clearTimeout(hideTimer);
+      showPanel();
+      hideTimer = setTimeout(hidePanel, 15000);
+    }
+    // Same song: RAF keeps running for smooth progress, panel state unchanged
   } else {
-    // Paused — keep showing, but stop interpolating; hide after 30s
-    showPanel();
+    // Paused — freeze progress display, don't show if already hidden
     stopRaf();
-    // Still update display with current position
     const pct = data.duration_ms > 0 ? (data.progress_ms / data.duration_ms) * 100 : 0;
     progressFill.style.width = pct + '%';
     timeElapsed.textContent  = fmt(data.progress_ms || 0);
-    scheduleHide(30000);
   }
 }
 
@@ -347,8 +349,10 @@ function handleMessage(data) {
     applyTrack(data);
   } else if (data.type === 'stopped') {
     stopRaf();
-    trackData = null;
-    scheduleHide(2000);
+    currentTitle = null;
+    trackData    = null;
+    clearTimeout(hideTimer);
+    hidePanel();
   }
 }
 
