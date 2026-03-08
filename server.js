@@ -861,6 +861,18 @@ app.get('/command/:name', (req, res) => {
   res.json({ ok: true, command: key });
 });
 
+app.get('/api/viewers', async (_req, res) => {
+  try {
+    const r = await fetch(`https://api.twitch.tv/helix/streams?user_login=${cfg.channel}`, { headers: twitchHeaders() });
+    if (!r.ok) return res.json({ live: false, viewers: 0 });
+    const d = await r.json();
+    const stream = d.data?.[0];
+    res.json({ live: !!stream, viewers: stream?.viewer_count ?? 0 });
+  } catch {
+    res.json({ live: false, viewers: 0 });
+  }
+});
+
 app.get('/status', (_req, res) => {
   res.json({
     configured:         !!(cfg.clientId && cfg.clientSecret && cfg.channel),
@@ -1005,9 +1017,17 @@ ${hasTokens ? `
     </div>
   </div>
   <div style="flex:1;display:flex;flex-direction:column;gap:16px">
-    <div class="card" style="padding:14px">
-      <h2>Chat Preview</h2>
-      <iframe id="chat-preview" src="/chat.html" class="chat-frame" frameborder="0"></iframe>
+    <div style="display:flex;gap:16px;align-items:stretch">
+      <div class="card" style="padding:14px;flex:3">
+        <h2>Chat Preview</h2>
+        <iframe id="chat-preview" src="/chat.html" class="chat-frame" frameborder="0"></iframe>
+      </div>
+      <div class="card" style="flex:2;display:flex;flex-direction:column">
+        <h2>Viewers</h2>
+        <div id="viewer-status" style="font-size:.68rem;letter-spacing:2px;color:#555;margin-bottom:16px">—</div>
+        <div id="viewer-count" style="font-family:'Orbitron',sans-serif;color:#00f5ff;font-size:2.8rem;text-align:center;flex:1;display:flex;align-items:center;justify-content:center">—</div>
+        <div id="viewer-updated" style="font-size:.62rem;color:#3d3d5c;text-align:center;margin-top:12px;letter-spacing:1px">—</div>
+      </div>
     </div>
     <div style="display:flex;gap:16px;align-items:flex-start">
       <div class="card" style="flex:1">
@@ -1506,6 +1526,30 @@ async function queueRemove(username) {
 
 // Load initial queue state
 fetch('/queue').then(function(r) { return r.json(); }).then(renderQueue).catch(function() {});
+
+// ── Viewers polling ──────────────────────────────────────────────────
+async function refreshViewers() {
+  try {
+    const r = await fetch('/api/viewers');
+    const d = await r.json();
+    const countEl = document.getElementById('viewer-count');
+    const statusEl = document.getElementById('viewer-status');
+    const updatedEl = document.getElementById('viewer-updated');
+    if (!countEl) return;
+    if (d.live) {
+      countEl.textContent = d.viewers.toLocaleString();
+      statusEl.textContent = '● LIVE';
+      statusEl.style.color = '#00c853';
+    } else {
+      countEl.textContent = '—';
+      statusEl.textContent = '○ OFFLINE';
+      statusEl.style.color = '#555';
+    }
+    updatedEl.textContent = 'UPDATED ' + new Date().toLocaleTimeString();
+  } catch {}
+}
+refreshViewers();
+setInterval(refreshViewers, 30000);
 
 // ── Shoutout UI ─────────────────────────────────────────────────────
 async function sendShoutout() {
