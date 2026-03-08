@@ -206,7 +206,11 @@ let lastAppliedClear = 0;
 function clearChat(clearTime) {
   if (clearTime <= lastAppliedClear) return;
   lastAppliedClear = clearTime;
-  document.getElementById('chat').innerHTML = '';
+  const chat = document.getElementById('chat');
+  for (const el of [...chat.querySelectorAll('.msg')]) {
+    el.classList.add('fade-out');
+    el.addEventListener('animationend', () => el.remove(), { once: true });
+  }
 }
 
 // Poll as reliable fallback in case WS push is missed
