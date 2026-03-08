@@ -864,6 +864,12 @@ app.delete('/queue/:username', (req, res) => {
   res.json({ ok: true, queue });
 });
 
+// ── Chat control routes ────────────────────────────────────────────────────────
+app.post('/chat/clear', (_req, res) => {
+  broadcastChatEvent({ type: 'clear_chat' });
+  res.json({ ok: true });
+});
+
 // ── Moderation routes ──────────────────────────────────────────────────────────
 app.post('/moderation/timeout/:username', async (req, res) => {
   const login = req.params.username.replace(/^@/, '').toLowerCase();
@@ -1085,7 +1091,10 @@ ${hasTokens ? `
   <div style="flex:1;display:flex;flex-direction:column;gap:16px">
     <div style="display:flex;gap:16px;align-items:stretch">
       <div class="card" style="padding:14px;flex:3">
-        <h2>Chat Preview</h2>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <h2 style="margin:0">Chat Preview</h2>
+          <button class="btn" style="margin:0;padding:5px 14px;font-size:.62rem;background:linear-gradient(135deg,#3a0000,#6b0000)" onclick="fetch('/chat/clear',{method:'POST'})">Clear Chat</button>
+        </div>
         <iframe id="chat-preview" src="/chat.html" class="chat-frame" frameborder="0"></iframe>
       </div>
       <div class="card" style="flex:2;display:flex;flex-direction:column;min-width:0">

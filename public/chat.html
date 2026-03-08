@@ -404,6 +404,13 @@ function connectControlWs() {
     try {
       const msg = JSON.parse(e.data);
       if (msg.type === 'titles_update') CUSTOM_TITLES = msg.titles;
+      if (msg.type === 'clear_chat') {
+        const chat = document.getElementById('chat');
+        for (const el of [...chat.querySelectorAll('.msg')]) {
+          el.classList.add('fade-out');
+          el.addEventListener('animationend', () => el.remove(), { once: true });
+        }
+      }
     } catch {}
   };
   ws.onclose = () => setTimeout(connectControlWs, 3000);
