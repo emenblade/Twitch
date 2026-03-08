@@ -252,6 +252,17 @@ function handleChatCommand(text, tags = { badgeSet: new Set(), username: '', dis
     return;
   }
 
+  // ── Moderation commands ───────────────────────────────────────────────────
+  if (lower.startsWith('!timeout ') || lower.startsWith('!ban ') || lower.startsWith('!unban ')) {
+    if (!hasPermission(tags.badgeSet, 'mod')) { console.log('Mod command denied (permission)'); return; }
+    const target = trimmed.split(/\s+/)[1]?.replace(/^@/, '').toLowerCase();
+    if (!target) return;
+    if (lower.startsWith('!timeout '))     moderateUser(target, 30).catch(() => {});
+    else if (lower.startsWith('!ban '))    moderateUser(target, null).catch(() => {});
+    else if (lower.startsWith('!unban '))  unmoderateUser(target).catch(() => {});
+    return;
+  }
+
   // Built-in commands (no permission/cooldown restrictions)
   const builtin = CHAT_COMMANDS[lower];
   if (builtin) { console.log('Built-in command:', lower); builtin.action(); return; }
@@ -414,6 +425,31 @@ async function getUserId(login) {
   const res  = await fetch(`https://api.twitch.tv/helix/users?login=${login}`, { headers: twitchHeaders() });
   const data = await res.json();
   return data.data?.[0]?.id;
+}
+
+// duration = seconds for timeout, null = permaban
+async function moderateUser(targetLogin, duration) {
+  const targetId = await getUserId(targetLogin);
+  if (!targetId) { console.error('Mod: user not found:', targetLogin); return false; }
+  const body = { data: { user_id: targetId } };
+  if (duration !== null) body.data.duration = duration;
+  const res = await fetch(
+    `https://api.twitch.tv/helix/moderation/bans?broadcaster_id=${broadcasterId}&moderator_id=${broadcasterId}`,
+    { method: 'POST', headers: twitchHeaders(), body: JSON.stringify(body) }
+  );
+  if (!res.ok) { console.error('Mod: failed:', res.status, await res.text()); return false; }
+  return true;
+}
+
+async function unmoderateUser(targetLogin) {
+  const targetId = await getUserId(targetLogin);
+  if (!targetId) { console.error('Mod: user not found:', targetLogin); return false; }
+  const res = await fetch(
+    `https://api.twitch.tv/helix/moderation/bans?broadcaster_id=${broadcasterId}&moderator_id=${broadcasterId}&user_id=${targetId}`,
+    { method: 'DELETE', headers: twitchHeaders() }
+  );
+  if (!res.ok && res.status !== 404) { console.error('Mod: unban failed:', res.status, await res.text()); return false; }
+  return true;
 }
 
 async function createSubscription(type, version, condition) {
@@ -824,6 +860,25 @@ app.delete('/queue/:username', (req, res) => {
   res.json({ ok: true, queue });
 });
 
+// ── Moderation routes ──────────────────────────────────────────────────────────
+app.post('/moderation/timeout/:username', async (req, res) => {
+  const login = req.params.username.replace(/^@/, '').toLowerCase();
+  const ok = await moderateUser(login, 30);
+  res.json({ ok });
+});
+
+app.post('/moderation/ban/:username', async (req, res) => {
+  const login = req.params.username.replace(/^@/, '').toLowerCase();
+  const ok = await moderateUser(login, null);
+  res.json({ ok });
+});
+
+app.post('/moderation/unban/:username', async (req, res) => {
+  const login = req.params.username.replace(/^@/, '').toLowerCase();
+  const ok = await unmoderateUser(login);
+  res.json({ ok });
+});
+
 // ── Spotify OAuth ──────────────────────────────────────────────────────────────
 app.get('/auth/spotify', (_req, res) => {
   if (!spotifyCfg.clientId) return res.send(errorPage('SPOTIFY_CLIENT_ID not set'));
@@ -900,7 +955,7 @@ function buildAuthUrl() {
     client_id:     cfg.clientId,
     redirect_uri:  cfg.redirectUri,
     response_type: 'code',
-    scope:         'moderator:read:followers channel:read:subscriptions bits:read channel:read:redemptions',
+    scope:         'moderator:read:followers channel:read:subscriptions bits:read channel:read:redemptions moderator:manage:banned_users',
     force_verify:  'true',
     state:          crypto.randomBytes(16).toString('hex'),
   });
@@ -1031,7 +1086,7 @@ ${hasTokens ? `
       </div>
       <div class="card" style="flex:2;display:flex;flex-direction:column;min-width:0">
         <h2>In Chat <span id="chatter-count" style="color:#7b2fff;font-size:.6rem;letter-spacing:1px"></span></h2>
-        <div id="chatter-list" style="flex:1;overflow-y:auto;max-height:520px;font-size:.72rem;font-family:'Share Tech Mono',monospace;color:#c9a0dc;line-height:1.7;column-count:2;column-gap:12px"></div>
+        <div id="chatter-list" style="flex:1;overflow-y:auto;max-height:520px;font-size:.82rem;font-family:'Share Tech Mono',monospace;color:#c9a0dc"></div>
         <div id="chatter-updated" style="font-size:.62rem;color:#3d3d5c;margin-top:10px;letter-spacing:1px">—</div>
       </div>
     </div>
@@ -1534,16 +1589,22 @@ async function queueRemove(username) {
 fetch('/queue').then(function(r) { return r.json(); }).then(renderQueue).catch(function() {});
 
 // ── Chatters polling ─────────────────────────────────────────────────
+var CHANNEL = '${cfg.channel}';
+var BTN_BASE = 'border:none;border-radius:3px;cursor:pointer;font-family:\\'Share Tech Mono\\',monospace;font-size:.6rem;letter-spacing:1px;padding:2px 7px;margin-left:4px;';
+
+async function modAction(type, username) {
+  try { await fetch('/moderation/' + type + '/' + encodeURIComponent(username), { method: 'POST' }); } catch {}
+}
+
 async function refreshChatters() {
   try {
-    const r = await fetch('/api/chatters');
-    const d = await r.json();
-    const listEl = document.getElementById('chatter-list');
-    const countEl = document.getElementById('chatter-count');
-    const updatedEl = document.getElementById('chatter-updated');
+    var r = await fetch('/api/chatters');
+    var d = await r.json();
+    var listEl = document.getElementById('chatter-list');
+    var countEl = document.getElementById('chatter-count');
+    var updatedEl = document.getElementById('chatter-updated');
     if (!listEl) return;
     countEl.textContent = '(' + d.count + ')';
-    // Group by first letter
     var groups = {};
     for (var i = 0; i < d.users.length; i++) {
       var u = d.users[i];
@@ -1551,16 +1612,51 @@ async function refreshChatters() {
       if (!groups[k]) groups[k] = [];
       groups[k].push(u);
     }
-    var html = '';
+    var frag = document.createDocumentFragment();
     var letters = Object.keys(groups).sort();
     for (var j = 0; j < letters.length; j++) {
       var letter = letters[j];
-      html += '<div style="color:#7b2fff;font-size:.55rem;letter-spacing:2px;border-bottom:1px solid #2a005a;padding-bottom:2px;margin:6px 0 3px;break-after:avoid">' + letter + '</div>';
+      var hdr = document.createElement('div');
+      hdr.style.cssText = 'color:#7b2fff;font-size:.55rem;letter-spacing:2px;border-bottom:1px solid #2a005a;padding-bottom:2px;margin:8px 0 4px';
+      hdr.textContent = letter;
+      frag.appendChild(hdr);
       for (var k2 = 0; k2 < groups[letter].length; k2++) {
-        html += '<div style="break-inside:avoid">' + groups[letter][k2] + '</div>';
+        var name = groups[letter][k2];
+        var row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;padding:2px 0';
+        var link = document.createElement('a');
+        link.href = 'https://www.twitch.tv/popout/' + CHANNEL + '/viewercard/' + name;
+        link.target = '_blank';
+        link.rel = 'noreferrer';
+        link.textContent = name;
+        link.style.cssText = 'color:#c9a0dc;text-decoration:none;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+        link.onmouseover = function() { this.style.color = '#00f5ff'; };
+        link.onmouseout  = function() { this.style.color = '#c9a0dc'; };
+        var toBtn = document.createElement('button');
+        toBtn.textContent = 'TO';
+        toBtn.style.cssText = BTN_BASE + 'background:#3a1a00;color:#ff8c00';
+        toBtn.title = '30s timeout';
+        (function(n) { toBtn.onclick = function() { modAction('timeout', n); }; })(name);
+        var banBtn = document.createElement('button');
+        banBtn.textContent = 'BAN';
+        banBtn.style.cssText = BTN_BASE + 'background:#3a0000;color:#ff2d2d';
+        banBtn.title = 'Permanent ban';
+        (function(n) { banBtn.onclick = function() { modAction('ban', n); }; })(name);
+        row.appendChild(link);
+        row.appendChild(toBtn);
+        row.appendChild(banBtn);
+        frag.appendChild(row);
       }
     }
-    listEl.innerHTML = html || '<span style="color:#3d3d5c">no one in chat</span>';
+    listEl.innerHTML = '';
+    if (d.count === 0) {
+      var empty = document.createElement('span');
+      empty.style.color = '#3d3d5c';
+      empty.textContent = 'no one in chat';
+      listEl.appendChild(empty);
+    } else {
+      listEl.appendChild(frag);
+    }
     updatedEl.textContent = 'UPDATED ' + new Date().toLocaleTimeString();
   } catch {}
 }
