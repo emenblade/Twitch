@@ -42,7 +42,7 @@
     Target="/app/data"
     Default="/mnt/user/appdata/stream-assets"
     Mode="rw"
-    Description="Persistent storage for Twitch auth tokens. Tokens are saved here so they survive container restarts."
+    Description="Persistent storage for all app data: Twitch/Spotify auth tokens, alert sound effects (sounds/), and custom command media files (media/). Everything here survives container restarts and image updates."
     Type="Path"
     Display="always"
     Required="true"
