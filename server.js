@@ -138,6 +138,9 @@ const CHAT_COMMANDS = {
   },
 };
 
+// ── Queue state ────────────────────────────────────────────────────────────────
+const queue = []; // [{ username, displayName }]
+
 // ── Cooldown tracking ──────────────────────────────────────────────────────────
 const commandState = {}; // { [key]: { lastTriggered: 0, triggeredThisStream: false } }
 
@@ -160,16 +163,21 @@ function recordTrigger(key) {
 }
 
 // ── IRC chat tag parsing ───────────────────────────────────────────────────────
-function parseChatTags(raw) {
+function parseChatTags(raw, ircNick = '') {
   const badgeSet = new Set();
+  let displayName = ircNick;
   for (const part of raw.split(';')) {
-    if (!part.startsWith('badges=')) continue;
-    for (const b of part.slice(7).split(',')) {
-      const name = b.split('/')[0];
-      if (name) badgeSet.add(name);
+    if (part.startsWith('badges=')) {
+      for (const b of part.slice(7).split(',')) {
+        const name = b.split('/')[0];
+        if (name) badgeSet.add(name);
+      }
+    } else if (part.startsWith('display-name=')) {
+      const dn = part.slice(13);
+      if (dn) displayName = dn;
     }
   }
-  return { badgeSet };
+  return { badgeSet, username: ircNick.toLowerCase(), displayName };
 }
 
 function hasPermission(badgeSet, permission) {
@@ -179,9 +187,67 @@ function hasPermission(badgeSet, permission) {
   return false;
 }
 
-function handleChatCommand(text, tags = { badgeSet: new Set() }) {
+function handleChatCommand(text, tags = { badgeSet: new Set(), username: '', displayName: '' }) {
   const trimmed = text.trim();
   const lower   = trimmed.toLowerCase();
+
+  // ── Shoutout ──────────────────────────────────────────────────────────────
+  if (lower.startsWith('!so ') || lower.startsWith('!shoutout ')) {
+    if (!hasPermission(tags.badgeSet, 'mod')) {
+      console.log('Shoutout denied (permission)'); return;
+    }
+    const parts = trimmed.split(/\s+/);
+    const target = parts[1];
+    if (target) handleShoutout(target);
+    return;
+  }
+
+  // ── Queue commands ────────────────────────────────────────────────────────
+  if (lower === '!addme') {
+    const uname = tags.username || '';
+    const dname = tags.displayName || uname;
+    if (!uname) return;
+    if (queue.some(e => e.username === uname)) {
+      console.log('Queue: already in queue:', uname); return;
+    }
+    queue.push({ username: uname, displayName: dname });
+    console.log('Queue: added', uname, '(total:', queue.length + ')');
+    broadcastQueue();
+    return;
+  }
+
+  if (lower === '!leave') {
+    const uname = tags.username || '';
+    const idx = queue.findIndex(e => e.username === uname);
+    if (idx !== -1) {
+      queue.splice(idx, 1);
+      console.log('Queue: removed', uname, '(total:', queue.length + ')');
+      broadcastQueue();
+    }
+    return;
+  }
+
+  if (lower === '!next') {
+    if (!hasPermission(tags.badgeSet, 'mod')) {
+      console.log('Queue !next denied (permission)'); return;
+    }
+    if (queue.length > 0) {
+      const removed = queue.shift();
+      console.log('Queue: next — removed', removed.username, '(total:', queue.length + ')');
+      broadcastQueue();
+    }
+    return;
+  }
+
+  if (lower === '!clearqueue') {
+    if (!hasPermission(tags.badgeSet, 'mod')) {
+      console.log('Queue !clearqueue denied (permission)'); return;
+    }
+    queue.length = 0;
+    console.log('Queue: cleared');
+    broadcastQueue();
+    return;
+  }
 
   // Built-in commands (no permission/cooldown restrictions)
   const builtin = CHAT_COMMANDS[lower];
@@ -204,6 +270,38 @@ function handleChatCommand(text, tags = { badgeSet: new Set() }) {
   broadcastMedia({ type: 'play_media', file: cmd.file, fileType: cmd.fileType });
 }
 
+async function handleShoutout(username) {
+  try {
+    const login = username.replace(/^@/, '').toLowerCase();
+    const res = await fetch(`https://api.twitch.tv/helix/users?login=${login}`, { headers: twitchHeaders() });
+    if (!res.ok) { console.error('Shoutout user lookup failed:', res.status); return; }
+    const data = await res.json();
+    const user = data.data?.[0];
+    if (!user) { console.error('Shoutout: user not found:', login); return; }
+
+    // Get last played game via channel info
+    let game = '';
+    try {
+      const chanRes = await fetch(`https://api.twitch.tv/helix/channels?broadcaster_id=${user.id}`, { headers: twitchHeaders() });
+      if (chanRes.ok) {
+        const chanData = await chanRes.json();
+        game = chanData.data?.[0]?.game_name || '';
+      }
+    } catch {}
+
+    broadcastShoutout({
+      type:        'shoutout',
+      username:    user.login,
+      displayName: user.display_name,
+      profilePic:  user.profile_image_url,
+      game,
+    });
+    console.log('Shoutout sent for', user.login);
+  } catch (err) {
+    console.error('handleShoutout error:', err.message);
+  }
+}
+
 function connectChatReader() {
   if (!cfg.channel) return;
   const ws = new WebSocket('wss://irc-ws.chat.twitch.tv');
@@ -216,8 +314,8 @@ function connectChatReader() {
   ws.on('message', (raw) => {
     for (const line of raw.toString().split('\r\n')) {
       if (line.startsWith('PING')) { ws.send('PONG :tmi.twitch.tv'); continue; }
-      const match = line.match(/^@(\S+) :\S+ PRIVMSG #\S+ :(.*)$/);
-      if (match) handleChatCommand(match[2], parseChatTags(match[1]));
+      const match = line.match(/^@(\S+) :(\w+)!\S+ PRIVMSG #\S+ :(.*)$/);
+      if (match) handleChatCommand(match[3], parseChatTags(match[1], match[2]));
     }
   });
   ws.on('close', () => setTimeout(connectChatReader, 5000));
@@ -480,6 +578,20 @@ function broadcastChatEvent(data) {
   chatClients.forEach(ws => { if (ws.readyState === WebSocket.OPEN) ws.send(msg); });
 }
 
+const shoutoutClients = new Set();
+const queueClients    = new Set();
+
+function broadcastShoutout(data) {
+  const msg = JSON.stringify(data);
+  shoutoutClients.forEach(ws => { if (ws.readyState === WebSocket.OPEN) ws.send(msg); });
+}
+
+function broadcastQueue() {
+  const msg = JSON.stringify({ type: 'queue_update', queue });
+  queueClients.forEach(ws => { if (ws.readyState === WebSocket.OPEN) ws.send(msg); });
+  chatClients.forEach(ws => { if (ws.readyState === WebSocket.OPEN) ws.send(msg); });
+}
+
 // ── Token auto-refresh every 2 hours ─────────────────────────────────────────
 setInterval(async () => {
   if (!loadTokens()) return;
@@ -668,6 +780,35 @@ app.post('/command-reset', (_req, res) => {
   res.json({ ok: true });
 });
 
+// ── Shoutout route ─────────────────────────────────────────────────────────────
+app.post('/shoutout/:username', async (req, res) => {
+  await handleShoutout(req.params.username);
+  res.json({ ok: true });
+});
+
+// ── Queue routes ───────────────────────────────────────────────────────────────
+app.get('/queue', (_req, res) => res.json(queue));
+
+app.post('/queue/next', (_req, res) => {
+  if (queue.length > 0) queue.shift();
+  broadcastQueue();
+  res.json({ ok: true, queue });
+});
+
+app.post('/queue/clear', (_req, res) => {
+  queue.length = 0;
+  broadcastQueue();
+  res.json({ ok: true });
+});
+
+app.delete('/queue/:username', (req, res) => {
+  const uname = req.params.username.toLowerCase();
+  const idx = queue.findIndex(e => e.username === uname);
+  if (idx !== -1) queue.splice(idx, 1);
+  broadcastQueue();
+  res.json({ ok: true, queue });
+});
+
 // ── Spotify OAuth ──────────────────────────────────────────────────────────────
 app.get('/auth/spotify', (_req, res) => {
   if (!spotifyCfg.clientId) return res.send(errorPage('SPOTIFY_CLIENT_ID not set'));
@@ -816,6 +957,19 @@ function setupPageHtml(hasTokens, authUrl) {
   .t-color{width:34px;height:30px;border:1px solid #3d0080;border-radius:4px;background:#080012;cursor:pointer;padding:2px}
   table{width:100%;border-collapse:collapse;margin-top:8px}
   td{vertical-align:middle;font-size:.78rem}
+
+  /* ── Queue list ───────────────────────────────────────────────────── */
+  #queue-list{margin-top:8px;display:flex;flex-direction:column;gap:4px;min-height:24px}
+  .q-row{display:flex;align-items:center;gap:8px;padding:5px 8px;background:#080012;border:1px solid #3d0080;border-radius:4px;font-size:.78rem}
+  .q-num{color:#7b2fff;flex-shrink:0;min-width:18px;font-variant-numeric:tabular-nums}
+  .q-name{color:#e0c3ff;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .q-del{background:transparent;border:1px solid #ff2d78;color:#ff2d78;border-radius:3px;padding:2px 7px;cursor:pointer;font-family:inherit;font-size:.65rem;flex-shrink:0}
+  .q-empty{color:#3d0080;font-size:.75rem;padding:4px 2px}
+
+  /* ── Shoutout input row ────────────────────────────────────────────── */
+  .so-row{display:flex;gap:7px;margin-top:8px;align-items:center}
+  .so-input{background:#080012;border:1px solid #3d0080;border-radius:4px;padding:6px 10px;color:#e0c3ff;font-family:'Share Tech Mono',monospace;font-size:.78rem;flex:1}
+  .so-input:focus{outline:none;border-color:#9146ff}
 </style>
 </head><body>
 
@@ -1015,6 +1169,32 @@ ${hasTokens ? `
   </div>
   <div id="sound-fb" style="margin-top:10px;font-size:.72rem;min-height:1.1em;letter-spacing:1px"></div>
 </div>
+
+<div style="display:flex;gap:16px;margin-top:16px;align-items:flex-start">
+  <div class="card" style="flex:1">
+    <h2>Shoutout</h2>
+    <p style="font-size:.78rem">Chat command: <span style="color:#9146ff">!so @username</span> (mod+)</p>
+    <p style="margin-top:6px;font-size:.75rem">OBS Browser Source — <strong>600 × 160</strong>, transparent:</p>
+    <div class="url">${cfg.hostUrl}/shoutout.html</div>
+    <div class="so-row">
+      <input id="so-input" class="so-input" placeholder="@username" autocomplete="off" spellcheck="false">
+      <button class="btn" style="margin:0;padding:7px 18px;font-size:.65rem;background:linear-gradient(135deg,#5a10cc,#9146ff)" onclick="sendShoutout()">Send Shoutout</button>
+    </div>
+    <div id="so-fb" style="margin-top:8px;font-size:.72rem;min-height:1.1em;letter-spacing:1px"></div>
+  </div>
+  <div class="card" style="flex:1">
+    <h2>Queue</h2>
+    <p style="font-size:.78rem">Commands: <span style="color:#9146ff">!addme</span> · <span style="color:#9146ff">!leave</span> · <span style="color:#9146ff">!next</span> (mod+) · <span style="color:#9146ff">!clearqueue</span> (mod+)</p>
+    <p style="margin-top:6px;font-size:.75rem">OBS Browser Source — <strong>300 × 600</strong>, transparent:</p>
+    <div class="url">${cfg.hostUrl}/queue.html</div>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button class="btn" style="margin:0;padding:7px 16px;font-size:.65rem" onclick="queueNext()">Next</button>
+      <button class="btn" style="margin:0;padding:7px 16px;font-size:.65rem;background:linear-gradient(135deg,#6b0000,#c0000c)" onclick="queueClear()">Clear</button>
+    </div>
+    <div id="queue-list"><div class="q-empty">Queue is empty</div></div>
+  </div>
+</div>
+
 ` : `
 <div style="display:flex;flex-direction:column;gap:16px;max-width:600px">
   <div class="card">
@@ -1128,7 +1308,13 @@ const FEED_TYPES = new Set(['follow','sub','resub','giftsub','bits','raid','rede
 
 (function connectFeedWs() {
   const ws = new WebSocket(\`ws://\${location.host}/chat-ws\`);
-  ws.onmessage = e => { try { const m = JSON.parse(e.data); if (FEED_TYPES.has(m.type)) addFeedEvent(m); } catch {} };
+  ws.onmessage = e => {
+    try {
+      const m = JSON.parse(e.data);
+      if (FEED_TYPES.has(m.type)) addFeedEvent(m);
+      if (m.type === 'queue_update') renderQueue(m.queue);
+    } catch {}
+  };
   ws.onclose = () => setTimeout(connectFeedWs, 3000);
   ws.onerror = () => ws.close();
 })();
@@ -1271,6 +1457,82 @@ async function resetStream() {
 
 if (document.getElementById('sstat-follow')) loadSoundsUI();
 if (document.getElementById('nc-tbody')) loadCustomCmdsUI();
+
+// ── Queue UI ────────────────────────────────────────────────────────
+function renderQueue(q) {
+  const list = document.getElementById('queue-list');
+  if (!list) return;
+  while (list.firstChild) list.removeChild(list.firstChild);
+  if (!q || q.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'q-empty';
+    empty.textContent = 'Queue is empty';
+    list.appendChild(empty);
+    return;
+  }
+  q.forEach(function(entry, i) {
+    const row = document.createElement('div');
+    row.className = 'q-row';
+    const num = document.createElement('span');
+    num.className = 'q-num';
+    num.textContent = String(i + 1) + '.';
+    const name = document.createElement('span');
+    name.className = 'q-name';
+    name.textContent = entry.displayName || entry.username;
+    const del = document.createElement('button');
+    del.className = 'q-del';
+    del.textContent = 'Remove';
+    del.dataset.username = entry.username;
+    del.onclick = function() { queueRemove(this.dataset.username); };
+    row.appendChild(num);
+    row.appendChild(name);
+    row.appendChild(del);
+    list.appendChild(row);
+  });
+}
+
+async function queueNext() {
+  await fetch('/queue/next', { method: 'POST' });
+}
+
+async function queueClear() {
+  await fetch('/queue/clear', { method: 'POST' });
+}
+
+async function queueRemove(username) {
+  await fetch('/queue/' + encodeURIComponent(username), { method: 'DELETE' });
+}
+
+// Load initial queue state
+fetch('/queue').then(function(r) { return r.json(); }).then(renderQueue).catch(function() {});
+
+// ── Shoutout UI ─────────────────────────────────────────────────────
+async function sendShoutout() {
+  const input = document.getElementById('so-input');
+  const fb = document.getElementById('so-fb');
+  if (!input || !fb) return;
+  const val = input.value.trim();
+  if (!val) return;
+  fb.style.color = '#00f5ff';
+  fb.textContent = 'Sending shoutout...';
+  try {
+    const username = val.replace(/^@/, '');
+    const r = await fetch('/shoutout/' + encodeURIComponent(username), { method: 'POST' });
+    const d = await r.json();
+    if (d.ok) {
+      fb.style.color = '#00ff88';
+      fb.textContent = '\\u2713 Shoutout sent for ' + username;
+      input.value = '';
+    } else {
+      fb.style.color = '#ff2d78';
+      fb.textContent = '\\u2717 ' + (d.error || 'Failed');
+    }
+  } catch {
+    fb.style.color = '#ff2d78';
+    fb.textContent = '\\u2717 Request failed';
+  }
+  setTimeout(function() { const f = document.getElementById('so-fb'); if (f) f.textContent = ''; }, 3000);
+}
 </script>
 
 </body></html>`;
@@ -1283,10 +1545,12 @@ const server   = http.createServer(app);
 // When both share { server }, each WSS fires for every upgrade — the one
 // whose path doesn't match calls abortHandshake(), corrupting the already-
 // upgraded socket and causing "Invalid frame header" on the client.
-const wss        = new WebSocketServer({ noServer: true, perMessageDeflate: false });
-const chatWss    = new WebSocketServer({ noServer: true, perMessageDeflate: false });
-const spotifyWss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
-const mediaWss   = new WebSocketServer({ noServer: true, perMessageDeflate: false });
+const wss         = new WebSocketServer({ noServer: true, perMessageDeflate: false });
+const chatWss     = new WebSocketServer({ noServer: true, perMessageDeflate: false });
+const spotifyWss  = new WebSocketServer({ noServer: true, perMessageDeflate: false });
+const mediaWss    = new WebSocketServer({ noServer: true, perMessageDeflate: false });
+const shoutoutWss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
+const queueWss    = new WebSocketServer({ noServer: true, perMessageDeflate: false });
 
 server.on('upgrade', (request, socket, head) => {
   const { pathname } = new URL(request.url, `http://${request.headers.host}`);
@@ -1298,6 +1562,10 @@ server.on('upgrade', (request, socket, head) => {
     spotifyWss.handleUpgrade(request, socket, head, (ws) => spotifyWss.emit('connection', ws, request));
   } else if (pathname === '/media-ws') {
     mediaWss.handleUpgrade(request, socket, head, (ws) => mediaWss.emit('connection', ws, request));
+  } else if (pathname === '/shoutout-ws') {
+    shoutoutWss.handleUpgrade(request, socket, head, (ws) => shoutoutWss.emit('connection', ws, request));
+  } else if (pathname === '/queue-ws') {
+    queueWss.handleUpgrade(request, socket, head, (ws) => queueWss.emit('connection', ws, request));
   } else {
     socket.destroy();
   }
@@ -1330,6 +1598,19 @@ mediaWss.on('connection', (ws) => {
   mediaClients.add(ws);
   ws.on('close', () => mediaClients.delete(ws));
   ws.on('error', () => mediaClients.delete(ws));
+});
+
+shoutoutWss.on('connection', (ws) => {
+  shoutoutClients.add(ws);
+  ws.on('close', () => shoutoutClients.delete(ws));
+  ws.on('error', () => shoutoutClients.delete(ws));
+});
+
+queueWss.on('connection', (ws) => {
+  queueClients.add(ws);
+  ws.send(JSON.stringify({ type: 'queue_update', queue }));
+  ws.on('close', () => queueClients.delete(ws));
+  ws.on('error', () => queueClients.delete(ws));
 });
 
 server.listen(cfg.port, async () => {

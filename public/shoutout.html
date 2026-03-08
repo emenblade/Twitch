@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Shoutout</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      width: 600px;
+      height: 160px;
+      overflow: hidden;
+      background: transparent;
+    }
+
+    #shoutout-wrap {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 600px;
+      height: 160px;
+    }
+
+    /* ── Panel ───────────────────────────────────────────────────── */
+    .panel {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(135deg, rgba(13,0,26,0.97) 0%, rgba(26,0,51,0.97) 60%, rgba(60,0,100,0.97) 100%);
+      border: 1px solid rgba(145,70,255,0.3);
+      border-right: 2px solid rgba(145,70,255,0.5);
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      padding: 16px 20px;
+      transform: translateX(110%);
+      opacity: 0;
+      box-shadow:
+        0 0 0 1px rgba(0,0,0,0.8),
+        0 0 14px -6px rgba(145,70,255,0.35),
+        inset 0 0 30px rgba(0,0,0,0.5);
+      overflow: hidden;
+    }
+
+    /* Scan-line overlay */
+    .panel::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0, 0, 0, 0.12) 2px,
+        rgba(0, 0, 0, 0.12) 4px
+      );
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    /* Top-left corner bracket */
+    .panel::after {
+      content: '';
+      position: absolute;
+      top: 6px; left: 6px;
+      width: 12px; height: 12px;
+      border-top: 1px solid rgba(145,70,255,0.4);
+      border-left: 1px solid rgba(145,70,255,0.4);
+      opacity: 0.7;
+    }
+
+    /* Bottom-right corner bracket */
+    .corner-br {
+      position: absolute;
+      bottom: 6px; right: 6px;
+      width: 12px; height: 12px;
+      border-bottom: 1px solid rgba(145,70,255,0.4);
+      border-right: 1px solid rgba(145,70,255,0.4);
+      opacity: 0.7;
+      z-index: 2;
+    }
+
+    /* ── Animations ──────────────────────────────────────────────── */
+    @keyframes slideIn {
+      0%   { transform: translateX(110%); opacity: 0; }
+      60%  { transform: translateX(-8px);  opacity: 1; }
+      80%  { transform: translateX(4px); }
+      100% { transform: translateX(0);     opacity: 1; }
+    }
+
+    @keyframes slideOut {
+      0%   { transform: translateX(0);     opacity: 1; }
+      20%  { transform: translateX(-10px); opacity: 1; }
+      100% { transform: translateX(110%);  opacity: 0; }
+    }
+
+    @keyframes borderPulse {
+      0%, 100% { box-shadow: 0 0 0 1px rgba(0,0,0,0.8), 0 0 14px -6px rgba(145,70,255,0.35), inset 0 0 30px rgba(0,0,0,0.5); }
+      50%       { box-shadow: 0 0 0 1px rgba(0,0,0,0.8), 0 0 22px -4px rgba(145,70,255,0.5),  inset 0 0 30px rgba(0,0,0,0.5); }
+    }
+
+    @keyframes avatarGlow {
+      0%, 100% { box-shadow: 0 0 8px 1px rgba(145,70,255,0.3); }
+      50%       { box-shadow: 0 0 16px 3px rgba(145,70,255,0.5); }
+    }
+
+    .panel.show {
+      animation:
+        slideIn 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards,
+        borderPulse 2s ease-in-out 0.5s infinite;
+    }
+
+    .panel.hide {
+      animation: slideOut 0.4s ease-in forwards;
+    }
+
+    /* ── Avatar ──────────────────────────────────────────────────── */
+    .avatar {
+      flex-shrink: 0;
+      width: 90px;
+      height: 90px;
+      border-radius: 50%;
+      object-fit: cover;
+      background: #0d0015;
+      border: 2px solid rgba(145,70,255,0.4);
+      animation: avatarGlow 2s ease-in-out 0.5s infinite;
+      z-index: 2;
+    }
+
+    .avatar-placeholder {
+      flex-shrink: 0;
+      width: 90px;
+      height: 90px;
+      border-radius: 50%;
+      background: #0d0015;
+      border: 2px solid rgba(145,70,255,0.4);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 32px;
+      animation: avatarGlow 2s ease-in-out 0.5s infinite;
+      z-index: 2;
+    }
+
+    /* ── Content ─────────────────────────────────────────────────── */
+    .content {
+      flex: 1;
+      min-width: 0;
+      z-index: 2;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .shoutout-label {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      color: #9146ff;
+      text-shadow: 0 0 8px rgba(145,70,255,0.5);
+    }
+
+    .display-name {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 20px;
+      font-weight: 700;
+      color: #ffffff;
+      text-shadow: 0 0 12px rgba(255,255,255,0.35);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .twitch-url {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 12px;
+      color: #00f5ff;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      opacity: 0.9;
+    }
+
+    .game-line {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 11px;
+      color: #9146ff;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      opacity: 0.85;
+    }
+  </style>
+</head>
+<body>
+<div id="shoutout-wrap">
+  <div class="panel" id="panel">
+    <div class="corner-br"></div>
+    <img class="avatar" id="avatar" src="" alt="" style="display:none">
+    <div class="avatar-placeholder" id="avatar-placeholder">👤</div>
+    <div class="content">
+      <div class="shoutout-label">⚡ SHOUTOUT</div>
+      <div class="display-name" id="display-name">—</div>
+      <div class="twitch-url" id="twitch-url">twitch.tv/—</div>
+      <div class="game-line" id="game-line" style="display:none">NOW PLAYING · —</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const panel       = document.getElementById('panel');
+const avatarImg   = document.getElementById('avatar');
+const avatarHold  = document.getElementById('avatar-placeholder');
+const displayName = document.getElementById('display-name');
+const twitchUrl   = document.getElementById('twitch-url');
+const gameLine    = document.getElementById('game-line');
+
+let hideTimer = null;
+
+function showPanel() {
+  panel.classList.remove('hide');
+  panel.classList.add('show');
+}
+
+function hidePanel() {
+  panel.classList.remove('show');
+  panel.classList.add('hide');
+}
+
+function handleShoutout(data) {
+  // Populate content
+  displayName.textContent = data.displayName || data.username || '—';
+  twitchUrl.textContent   = 'twitch.tv/' + (data.username || '');
+
+  if (data.profilePic) {
+    avatarImg.src = data.profilePic;
+    avatarImg.style.display = 'block';
+    avatarHold.style.display = 'none';
+  } else {
+    avatarImg.style.display = 'none';
+    avatarHold.style.display = 'flex';
+  }
+
+  if (data.game) {
+    gameLine.textContent  = 'NOW PLAYING · ' + data.game;
+    gameLine.style.display = 'block';
+  } else {
+    gameLine.style.display = 'none';
+  }
+
+  // Show for 15 seconds
+  clearTimeout(hideTimer);
+  showPanel();
+  hideTimer = setTimeout(hidePanel, 15000);
+}
+
+// ── WebSocket ──────────────────────────────────────────────────────
+function connect() {
+  const ws = new WebSocket('ws://' + location.host + '/shoutout-ws');
+
+  ws.onmessage = function(e) {
+    try {
+      const m = JSON.parse(e.data);
+      if (m.type === 'shoutout') handleShoutout(m);
+    } catch {}
+  };
+
+  ws.onclose = function() { setTimeout(connect, 5000); };
+  ws.onerror = function() { ws.close(); };
+}
+
+connect();
+</script>
+</body>
+</html>
