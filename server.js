@@ -1031,7 +1031,7 @@ ${hasTokens ? `
       </div>
       <div class="card" style="flex:2;display:flex;flex-direction:column;min-width:0">
         <h2>In Chat <span id="chatter-count" style="color:#7b2fff;font-size:.6rem;letter-spacing:1px"></span></h2>
-        <div id="chatter-list" style="flex:1;overflow-y:auto;max-height:520px;font-size:.72rem;font-family:'Share Tech Mono',monospace;color:#c9a0dc;line-height:1.8;word-break:break-all"></div>
+        <div id="chatter-list" style="flex:1;overflow-y:auto;max-height:520px;font-size:.72rem;font-family:'Share Tech Mono',monospace;color:#c9a0dc;line-height:1.7;column-count:2;column-gap:12px"></div>
         <div id="chatter-updated" style="font-size:.62rem;color:#3d3d5c;margin-top:10px;letter-spacing:1px">—</div>
       </div>
     </div>
@@ -1543,7 +1543,24 @@ async function refreshChatters() {
     const updatedEl = document.getElementById('chatter-updated');
     if (!listEl) return;
     countEl.textContent = '(' + d.count + ')';
-    listEl.textContent = d.users.join('\\n');
+    // Group by first letter
+    var groups = {};
+    for (var i = 0; i < d.users.length; i++) {
+      var u = d.users[i];
+      var k = u[0] ? u[0].toUpperCase() : '#';
+      if (!groups[k]) groups[k] = [];
+      groups[k].push(u);
+    }
+    var html = '';
+    var letters = Object.keys(groups).sort();
+    for (var j = 0; j < letters.length; j++) {
+      var letter = letters[j];
+      html += '<div style="color:#7b2fff;font-size:.55rem;letter-spacing:2px;border-bottom:1px solid #2a005a;padding-bottom:2px;margin:6px 0 3px;break-after:avoid">' + letter + '</div>';
+      for (var k2 = 0; k2 < groups[letter].length; k2++) {
+        html += '<div style="break-inside:avoid">' + groups[letter][k2] + '</div>';
+      }
+    }
+    listEl.innerHTML = html || '<span style="color:#3d3d5c">no one in chat</span>';
     updatedEl.textContent = 'UPDATED ' + new Date().toLocaleTimeString();
   } catch {}
 }
