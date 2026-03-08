@@ -39,6 +39,19 @@ function saveTitles(titles) {
   fs.writeFileSync(titlesFile, JSON.stringify(titles, null, 2));
 }
 
+// ── Custom commands ────────────────────────────────────────────────────────────
+const mediaDir     = path.join(cfg.dataDir, 'media');
+const commandsFile = path.join(cfg.dataDir, 'custom-commands.json');
+
+function loadCommands() {
+  try { return JSON.parse(fs.readFileSync(commandsFile, 'utf8')); }
+  catch { return {}; }
+}
+function saveCommands(cmds) {
+  fs.mkdirSync(cfg.dataDir, { recursive: true });
+  fs.writeFileSync(commandsFile, JSON.stringify(cmds, null, 2));
+}
+
 // ── Custom sounds ──────────────────────────────────────────────────────────────
 const soundsDir   = path.join(cfg.dataDir, 'sounds');
 const ALERT_TYPES = ['follow', 'sub', 'resub', 'giftsub', 'bits', 'raid'];
@@ -125,9 +138,70 @@ const CHAT_COMMANDS = {
   },
 };
 
-function handleChatCommand(text) {
-  const cmd = CHAT_COMMANDS[text.trim().toLowerCase()];
-  if (cmd) { console.log('Chat command:', text.trim()); cmd.action(); }
+// ── Cooldown tracking ──────────────────────────────────────────────────────────
+const commandState = {}; // { [key]: { lastTriggered: 0, triggeredThisStream: false } }
+
+function getState(key) {
+  if (!commandState[key]) commandState[key] = { lastTriggered: 0, triggeredThisStream: false };
+  return commandState[key];
+}
+
+function cooldownOk(cmd, key) {
+  const s = getState(key);
+  if (cmd.oncePerStream && s.triggeredThisStream) return false;
+  if (cmd.cooldown > 0 && Date.now() - s.lastTriggered < cmd.cooldown * 1000) return false;
+  return true;
+}
+
+function recordTrigger(key) {
+  const s = getState(key);
+  s.lastTriggered = Date.now();
+  s.triggeredThisStream = true;
+}
+
+// ── IRC chat tag parsing ───────────────────────────────────────────────────────
+function parseChatTags(raw) {
+  const badgeSet = new Set();
+  for (const part of raw.split(';')) {
+    if (!part.startsWith('badges=')) continue;
+    for (const b of part.slice(7).split(',')) {
+      const name = b.split('/')[0];
+      if (name) badgeSet.add(name);
+    }
+  }
+  return { badgeSet };
+}
+
+function hasPermission(badgeSet, permission) {
+  if (permission === 'everyone') return true;
+  if (permission === 'vip')     return badgeSet.has('vip') || badgeSet.has('moderator') || badgeSet.has('broadcaster');
+  if (permission === 'mod')     return badgeSet.has('moderator') || badgeSet.has('broadcaster');
+  return false;
+}
+
+function handleChatCommand(text, tags = { badgeSet: new Set() }) {
+  const trimmed = text.trim();
+  const lower   = trimmed.toLowerCase();
+
+  // Built-in commands (no permission/cooldown restrictions)
+  const builtin = CHAT_COMMANDS[lower];
+  if (builtin) { console.log('Built-in command:', lower); builtin.action(); return; }
+
+  // Custom commands
+  const cmds = loadCommands();
+  const cmd  = cmds[lower];
+  if (!cmd) return;
+
+  if (!hasPermission(tags.badgeSet, cmd.permission)) {
+    console.log('Command denied (permission):', lower); return;
+  }
+  if (!cooldownOk(cmd, lower)) {
+    console.log('Command on cooldown:', lower); return;
+  }
+
+  recordTrigger(lower);
+  console.log('Custom command fired:', lower);
+  broadcastMedia({ type: 'play_media', file: cmd.file, fileType: cmd.fileType });
 }
 
 function connectChatReader() {
@@ -142,8 +216,8 @@ function connectChatReader() {
   ws.on('message', (raw) => {
     for (const line of raw.toString().split('\r\n')) {
       if (line.startsWith('PING')) { ws.send('PONG :tmi.twitch.tv'); continue; }
-      const match = line.match(/^@\S+ :\S+ PRIVMSG #\S+ :(.*)$/);
-      if (match) handleChatCommand(match[1]);
+      const match = line.match(/^@(\S+) :\S+ PRIVMSG #\S+ :(.*)$/);
+      if (match) handleChatCommand(match[2], parseChatTags(match[1]));
     }
   });
   ws.on('close', () => setTimeout(connectChatReader, 5000));
@@ -308,6 +382,7 @@ async function setupSubscriptions() {
     await createSubscription('channel.cheer',                '1', { broadcaster_user_id: id });
     await createSubscription('channel.raid',                 '1', { to_broadcaster_user_id: id });
     await createSubscription('channel.channel_points_custom_reward_redemption.add', '1', { broadcaster_user_id: id });
+    await createSubscription('stream.online', '1', { broadcaster_user_id: id });
   } catch (err) {
     console.error('Subscription setup failed:', err.message);
   }
@@ -363,6 +438,10 @@ function handleEvent(payload) {
         input:  event.user_input || '',
       });
       break;
+    case 'stream.online':
+      Object.keys(commandState).forEach(k => { commandState[k].triggeredThisStream = false; });
+      console.log('Stream started — once-per-stream command flags reset');
+      break;
   }
 
   if (alert) {
@@ -379,6 +458,12 @@ function tierLabel(tier) {
 // ── OBS client WebSocket server ───────────────────────────────────────────────
 const obsClients  = new Set();
 const chatClients = new Set();
+const mediaClients = new Set();
+
+function broadcastMedia(data) {
+  const msg = JSON.stringify(data);
+  mediaClients.forEach(ws => { if (ws.readyState === WebSocket.OPEN) ws.send(msg); });
+}
 
 function broadcast(data) {
   const msg = JSON.stringify(data);
@@ -515,6 +600,74 @@ app.delete('/sounds/:type', (req, res) => {
   res.json({ ok: true });
 });
 
+// ── Media files ────────────────────────────────────────────────────────────────
+const MEDIA_MIME_MAP = {
+  'video/mp4': 'mp4', 'video/webm': 'webm',
+  'audio/mpeg': 'mp3', 'audio/mp3': 'mp3', 'audio/wav': 'wav',
+  'audio/ogg': 'ogg', 'audio/webm': 'webm', 'audio/aac': 'aac',
+};
+const VIDEO_TYPES = new Set(['mp4', 'webm']);
+
+app.get('/media/:file', (req, res) => {
+  const fp = path.join(mediaDir, path.basename(req.params.file));
+  if (!fs.existsSync(fp)) return res.status(404).end();
+  res.sendFile(fp);
+});
+
+// ── Custom command routes ───────────────────────────────────────────────────────
+app.get('/custom-commands', (_req, res) => res.json(loadCommands()));
+
+app.post('/custom-commands/:name/file', express.raw({ type: '*/*', limit: '100mb' }), (req, res) => {
+  const name = req.params.name.toLowerCase().replace(/[^a-z0-9_-]/g, '');
+  if (!name) return res.status(400).json({ error: 'Invalid command name' });
+  const ct  = (req.headers['content-type'] || '').split(';')[0].trim();
+  const ext = MEDIA_MIME_MAP[ct];
+  if (!ext) return res.status(400).json({ error: 'Unsupported file type: ' + ct });
+  fs.mkdirSync(mediaDir, { recursive: true });
+  const filename = name + '.' + ext;
+  const fp = path.join(mediaDir, filename);
+  fs.writeFileSync(fp, req.body);
+  console.log('Media uploaded:', filename);
+  res.json({ ok: true, file: filename, fileType: VIDEO_TYPES.has(ext) ? 'video' : 'audio' });
+});
+
+app.post('/custom-commands/:name', express.json(), (req, res) => {
+  const name = req.params.name.toLowerCase().replace(/[^a-z0-9_-]/g, '');
+  if (!name) return res.status(400).json({ error: 'Invalid command name' });
+  const { desc, file, fileType, permission, cooldown, oncePerStream } = req.body || {};
+  if (!desc || !file) return res.status(400).json({ error: 'desc and file required' });
+  const cmds = loadCommands();
+  cmds['!' + name] = {
+    command:       '!' + name,
+    desc:          String(desc),
+    file:          String(file),
+    fileType:      fileType === 'video' ? 'video' : 'audio',
+    permission:    ['everyone','vip','mod'].includes(permission) ? permission : 'everyone',
+    cooldown:      Math.max(0, parseInt(cooldown) || 0),
+    oncePerStream: !!oncePerStream,
+  };
+  saveCommands(cmds);
+  res.json({ ok: true });
+});
+
+app.delete('/custom-commands/:name', (req, res) => {
+  const key = '!' + req.params.name.toLowerCase();
+  const cmds = loadCommands();
+  const cmd  = cmds[key];
+  if (cmd?.file) {
+    try { fs.unlinkSync(path.join(mediaDir, cmd.file)); } catch {}
+  }
+  delete cmds[key];
+  delete commandState[key];
+  saveCommands(cmds);
+  res.json({ ok: true });
+});
+
+app.post('/command-reset', (_req, res) => {
+  Object.keys(commandState).forEach(k => { commandState[k].triggeredThisStream = false; });
+  res.json({ ok: true });
+});
+
 // ── Spotify OAuth ──────────────────────────────────────────────────────────────
 app.get('/auth/spotify', (_req, res) => {
   if (!spotifyCfg.clientId) return res.send(errorPage('SPOTIFY_CLIENT_ID not set'));
@@ -554,9 +707,16 @@ app.get('/auth/spotify/callback', async (req, res) => {
 
 app.get('/command/:name', (req, res) => {
   const key = '!' + req.params.name.toLowerCase();
-  const cmd = CHAT_COMMANDS[key];
+
+  // Built-in
+  const builtin = CHAT_COMMANDS[key];
+  if (builtin) { builtin.action(); return res.json({ ok: true, command: key }); }
+
+  // Custom (dashboard trigger bypasses cooldown)
+  const cmds = loadCommands();
+  const cmd  = cmds[key];
   if (!cmd) return res.status(404).json({ error: 'Unknown command' });
-  cmd.action();
+  broadcastMedia({ type: 'play_media', file: cmd.file, fileType: cmd.fileType });
   res.json({ ok: true, command: key });
 });
 
@@ -703,6 +863,8 @@ ${hasTokens ? `
     <div class="url">${cfg.hostUrl}/alerts.html</div>
     <p style="margin-top:10px">Chat overlay — <strong>380 × 700</strong>, transparent, right side:</p>
     <div class="url">${cfg.hostUrl}/chat.html</div>
+    <p style="margin-top:10px">Media player (custom commands) — <strong>1920 × 1080</strong>, transparent, top layer:</p>
+    <div class="url">${cfg.hostUrl}/media.html</div>
   </div>
   <div class="card">
     <h2>Test Alerts</h2>
@@ -743,14 +905,16 @@ ${hasTokens ? `
 
 <div class="card" style="margin-top:16px">
   <h2>Chat Commands</h2>
-  <p>Active in <strong>#${cfg.channel}</strong>. Click Trigger to fire without typing in chat.</p>
-  <table style="margin-top:10px;width:100%">
+
+  <div style="font-size:.62rem;letter-spacing:2px;color:#7b2fff;margin-bottom:6px;text-transform:uppercase">Built-In</div>
+  <p style="margin-bottom:8px">Active in <strong>#${cfg.channel}</strong>. Click Trigger to fire without typing in chat.</p>
+  <table style="margin-top:4px;width:100%">
     <tbody>
       ${Object.entries(CHAT_COMMANDS).map(([cmd, { desc }], i, arr) => {
         const name = cmd.slice(1);
         const border = i < arr.length - 1 ? 'border-bottom:1px solid #0d0015' : '';
         return `<tr style="${border}">
-          <td style="padding:8px 14px 8px 0;color:#00f5ff;font-size:.82rem;white-space:nowrap;font-family:'Share Tech Mono',monospace">${cmd}</td>
+          <td style="padding:8px 14px 8px 0;color:#00f5ff;font-size:.82rem;white-space:nowrap;font-family:\'Share Tech Mono\',monospace">${cmd}</td>
           <td style="padding:8px 14px;color:#c9a0dc;font-size:.78rem;width:100%">${desc}</td>
           <td style="padding:8px 0;white-space:nowrap"><button onclick="triggerCmd('${name}')" class="btn" style="padding:5px 14px;margin:0;font-size:.62rem;letter-spacing:1px">Trigger</button></td>
         </tr>`;
@@ -758,6 +922,78 @@ ${hasTokens ? `
     </tbody>
   </table>
   <div id="cmd-fb" style="margin-top:8px;font-size:.72rem;min-height:1.1em;letter-spacing:1px"></div>
+
+  <div style="margin-top:22px;border-top:1px solid #1a0033;padding-top:16px">
+    <div style="font-size:.62rem;letter-spacing:2px;color:#7b2fff;margin-bottom:10px;text-transform:uppercase">Custom Commands</div>
+    <p style="margin-bottom:12px;font-size:.78rem">Create commands that play audio or video clips when typed in chat.</p>
+
+    <form onsubmit="createCommand(event)" style="display:grid;grid-template-columns:auto 1fr;gap:7px 12px;align-items:center;margin-bottom:14px;max-width:600px">
+      <label style="font-size:.72rem;color:#9d77cc;white-space:nowrap">Command</label>
+      <div style="display:flex;align-items:center;gap:4px">
+        <span style="color:#00f5ff;font-size:.82rem">!</span>
+        <input id="nc-name" class="t-input" placeholder="command" autocomplete="off" spellcheck="false" style="flex:1;max-width:180px">
+      </div>
+
+      <label style="font-size:.72rem;color:#9d77cc;white-space:nowrap">Description</label>
+      <input id="nc-desc" class="t-input" placeholder="What this command does" autocomplete="off" spellcheck="false">
+
+      <label style="font-size:.72rem;color:#9d77cc;white-space:nowrap">File</label>
+      <div style="display:flex;align-items:center;gap:8px">
+        <label style="cursor:pointer">
+          <input type="file" id="nc-file" accept="audio/*,video/*" style="display:none" onchange="document.getElementById('nc-fname').textContent=this.files[0]?this.files[0].name:'No file chosen'">
+          <span style="display:inline-block;font-size:.62rem;letter-spacing:1px;padding:5px 12px;border:1px solid #7b2fff;border-radius:3px;color:#7b2fff;text-transform:uppercase;cursor:pointer">Choose File</span>
+        </label>
+        <span id="nc-fname" style="font-size:.72rem;color:#4a2080">No file chosen</span>
+      </div>
+
+      <label style="font-size:.72rem;color:#9d77cc;white-space:nowrap">Permission</label>
+      <select id="nc-perm" class="t-input" style="width:auto;max-width:180px">
+        <option value="everyone">Everyone</option>
+        <option value="vip">VIP+</option>
+        <option value="mod">Mod+</option>
+      </select>
+
+      <label style="font-size:.72rem;color:#9d77cc;white-space:nowrap;align-self:flex-start;margin-top:6px">Cooldown</label>
+      <div style="display:flex;flex-direction:column;gap:5px;font-size:.75rem">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="radio" name="nc-cd" value="none" checked> No cooldown
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="radio" name="nc-cd" value="seconds"> Cooldown:
+          <input type="number" id="nc-cdsec" min="1" value="30" style="width:50px;background:#080012;border:1px solid #3d0080;border-radius:3px;padding:2px 6px;color:#e0c3ff;font-family:inherit"> sec
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="radio" name="nc-cd" value="stream"> Once per stream
+        </label>
+      </div>
+
+      <div></div>
+      <div style="display:flex;align-items:center;gap:12px;margin-top:4px">
+        <button type="submit" class="btn" style="padding:7px 20px;margin:0;font-size:.65rem">Create Command</button>
+        <span id="nc-fb" style="font-size:.72rem;min-height:1.1em;letter-spacing:1px"></span>
+      </div>
+    </form>
+
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+      <div style="font-size:.7rem;color:#7b2fff;letter-spacing:1px">EXISTING COMMANDS</div>
+      <button onclick="resetStream()" style="background:transparent;border:1px solid #3d0080;color:#9d77cc;border-radius:3px;padding:3px 10px;cursor:pointer;font-family:inherit;font-size:.65rem;letter-spacing:1px">Reset Stream</button>
+    </div>
+    <div id="nc-table-wrap">
+      <table style="width:100%;border-collapse:collapse">
+        <thead>
+          <tr style="border-bottom:1px solid #1a0033">
+            <th style="padding:6px 10px 6px 0;text-align:left;font-size:.65rem;letter-spacing:1px;color:#7b2fff;font-weight:normal">COMMAND</th>
+            <th style="padding:6px 10px;text-align:left;font-size:.65rem;letter-spacing:1px;color:#7b2fff;font-weight:normal">DESCRIPTION</th>
+            <th style="padding:6px 10px;text-align:left;font-size:.65rem;letter-spacing:1px;color:#7b2fff;font-weight:normal">PERM</th>
+            <th style="padding:6px 10px;text-align:left;font-size:.65rem;letter-spacing:1px;color:#7b2fff;font-weight:normal">COOLDOWN</th>
+            <th style="padding:6px 0;text-align:right;font-size:.65rem;letter-spacing:1px;color:#7b2fff;font-weight:normal" colspan="2">ACTIONS</th>
+          </tr>
+        </thead>
+        <tbody id="nc-tbody"></tbody>
+      </table>
+    </div>
+    <div id="nc-reset-fb" style="margin-top:6px;font-size:.72rem;min-height:1.1em;letter-spacing:1px"></div>
+  </div>
 </div>
 
 <div class="card" style="margin-top:16px">
@@ -933,18 +1169,108 @@ async function removeSound(type) {
   loadSoundsUI();
 }
 
-async function triggerCmd(name) {
-  const fb = document.getElementById('cmd-fb');
+async function triggerCmd(name, fbId) {
+  const id = fbId || 'cmd-fb';
+  const fb = document.getElementById(id);
   if (fb) { fb.style.color = '#00f5ff'; fb.textContent = 'Triggering !' + name + '...'; }
   try {
     const r = await fetch('/command/' + name);
     const d = await r.json();
     if (fb) { fb.style.color = d.ok ? '#00ff88' : '#ff2d78'; fb.textContent = d.ok ? '\u2713 !' + name + ' triggered' : '\u2717 ' + (d.error || 'failed'); }
   } catch { if (fb) { fb.style.color = '#ff2d78'; fb.textContent = '\u2717 Request failed'; } }
-  setTimeout(() => { const f = document.getElementById('cmd-fb'); if (f) f.textContent = ''; }, 2000);
+  setTimeout(() => { const f = document.getElementById(id); if (f) f.textContent = ''; }, 2000);
+}
+
+// ── Custom commands ─────────────────────────────────────────────────
+async function loadCustomCmdsUI() {
+  const cmds = await fetch('/custom-commands').then(r => r.json()).catch(() => ({}));
+  const tbody = document.getElementById('nc-tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  const entries = Object.entries(cmds);
+  if (!entries.length) {
+    tbody.innerHTML = '<tr><td colspan="6" style="color:#3d0080;padding:10px 0;font-size:.75rem">No custom commands yet.</td></tr>';
+    return;
+  }
+  for (const [key, cmd] of entries) {
+    const name = key.slice(1);
+    let cdLabel = 'None';
+    if (cmd.oncePerStream) cdLabel = 'Once/stream';
+    else if (cmd.cooldown > 0) cdLabel = cmd.cooldown + 's';
+    const permLabel = cmd.permission === 'everyone' ? 'Everyone' : cmd.permission === 'vip' ? 'VIP+' : 'Mod+';
+    const tr = document.createElement('tr');
+    tr.style.borderBottom = '1px solid #0d0015';
+    tr.innerHTML = '<td style="padding:7px 10px 7px 0;color:#00f5ff;font-size:.8rem;white-space:nowrap">' + escHtml(key) + '</td>' +
+      '<td style="padding:7px 10px;color:#c9a0dc;font-size:.76rem">' + escHtml(cmd.desc) + '</td>' +
+      '<td style="padding:7px 10px;color:#9d77cc;font-size:.72rem;white-space:nowrap">' + permLabel + '</td>' +
+      '<td style="padding:7px 10px;color:#9d77cc;font-size:.72rem;white-space:nowrap">' + cdLabel + '</td>' +
+      '<td style="padding:7px 4px;white-space:nowrap"><button onclick="triggerCmd(\'' + name + '\',\'nc-reset-fb\')" class="btn" style="padding:4px 12px;margin:0;font-size:.6rem;letter-spacing:1px">Trigger</button></td>' +
+      '<td style="padding:7px 0;white-space:nowrap;text-align:right"><button onclick="deleteCustomCmd(\'' + name + '\')" style="background:transparent;border:1px solid #ff2d78;color:#ff2d78;border-radius:3px;padding:3px 9px;cursor:pointer;font-family:inherit;font-size:.6rem">Delete</button></td>';
+    tbody.appendChild(tr);
+  }
+}
+
+async function createCommand(e) {
+  e.preventDefault();
+  const fb   = document.getElementById('nc-fb');
+  const name = document.getElementById('nc-name').value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+  const desc = document.getElementById('nc-desc').value.trim();
+  const fileInput = document.getElementById('nc-file');
+  const file = fileInput.files[0];
+  if (!name) { fb.style.color = '#ff2d78'; fb.textContent = 'Enter a command name'; return; }
+  if (!desc) { fb.style.color = '#ff2d78'; fb.textContent = 'Enter a description'; return; }
+  if (!file) { fb.style.color = '#ff2d78'; fb.textContent = 'Choose a file'; return; }
+  const perm    = document.getElementById('nc-perm').value;
+  const cdVal   = document.querySelector('input[name="nc-cd"]:checked').value;
+  const cdsec   = parseInt(document.getElementById('nc-cdsec').value) || 30;
+  const cooldown      = cdVal === 'seconds' ? cdsec : 0;
+  const oncePerStream = cdVal === 'stream';
+
+  fb.style.color = '#00f5ff'; fb.textContent = 'Uploading file...';
+
+  let uploadResult;
+  try {
+    const r = await fetch('/custom-commands/' + name + '/file', { method: 'POST', headers: { 'Content-Type': file.type }, body: file });
+    uploadResult = await r.json();
+    if (!uploadResult.ok) throw new Error(uploadResult.error || 'Upload failed');
+  } catch (err) { fb.style.color = '#ff2d78'; fb.textContent = '\u2717 ' + err.message; return; }
+
+  fb.textContent = 'Saving command...';
+  try {
+    const r = await fetch('/custom-commands/' + name, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ desc, file: uploadResult.file, fileType: uploadResult.fileType, permission: perm, cooldown, oncePerStream }),
+    });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'Save failed');
+    fb.style.color = '#00ff88'; fb.textContent = '\u2713 !' + name + ' created';
+    document.getElementById('nc-name').value = '';
+    document.getElementById('nc-desc').value = '';
+    fileInput.value = '';
+    document.getElementById('nc-fname').textContent = 'No file chosen';
+    loadCustomCmdsUI();
+  } catch (err) { fb.style.color = '#ff2d78'; fb.textContent = '\u2717 ' + err.message; }
+  setTimeout(() => { const f = document.getElementById('nc-fb'); if (f) f.textContent = ''; }, 3000);
+}
+
+async function deleteCustomCmd(name) {
+  await fetch('/custom-commands/' + name, { method: 'DELETE' });
+  loadCustomCmdsUI();
+}
+
+async function resetStream() {
+  const fb = document.getElementById('nc-reset-fb');
+  if (fb) { fb.style.color = '#00f5ff'; fb.textContent = 'Resetting...'; }
+  try {
+    await fetch('/command-reset', { method: 'POST' });
+    if (fb) { fb.style.color = '#00ff88'; fb.textContent = '\u2713 Stream flags reset'; }
+  } catch { if (fb) { fb.style.color = '#ff2d78'; fb.textContent = '\u2717 Request failed'; } }
+  setTimeout(() => { const f = document.getElementById('nc-reset-fb'); if (f) f.textContent = ''; }, 2000);
 }
 
 if (document.getElementById('sstat-follow')) loadSoundsUI();
+if (document.getElementById('nc-tbody')) loadCustomCmdsUI();
 </script>
 
 </body></html>`;
@@ -960,6 +1286,7 @@ const server   = http.createServer(app);
 const wss        = new WebSocketServer({ noServer: true, perMessageDeflate: false });
 const chatWss    = new WebSocketServer({ noServer: true, perMessageDeflate: false });
 const spotifyWss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
+const mediaWss   = new WebSocketServer({ noServer: true, perMessageDeflate: false });
 
 server.on('upgrade', (request, socket, head) => {
   const { pathname } = new URL(request.url, `http://${request.headers.host}`);
@@ -969,6 +1296,8 @@ server.on('upgrade', (request, socket, head) => {
     chatWss.handleUpgrade(request, socket, head, (ws) => chatWss.emit('connection', ws, request));
   } else if (pathname === '/spotify-ws') {
     spotifyWss.handleUpgrade(request, socket, head, (ws) => spotifyWss.emit('connection', ws, request));
+  } else if (pathname === '/media-ws') {
+    mediaWss.handleUpgrade(request, socket, head, (ws) => mediaWss.emit('connection', ws, request));
   } else {
     socket.destroy();
   }
@@ -995,6 +1324,12 @@ spotifyWss.on('connection', (ws) => {
   ws.send(JSON.stringify({ type: 'set_mode', mode: spotifyMode }));
   ws.on('close', () => spotifyClients.delete(ws));
   ws.on('error', () => spotifyClients.delete(ws));
+});
+
+mediaWss.on('connection', (ws) => {
+  mediaClients.add(ws);
+  ws.on('close', () => mediaClients.delete(ws));
+  ws.on('error', () => mediaClients.delete(ws));
 });
 
 server.listen(cfg.port, async () => {
