@@ -865,9 +865,16 @@ app.delete('/queue/:username', (req, res) => {
 });
 
 // ── Chat control routes ────────────────────────────────────────────────────────
+let lastClearTime = 0;
+
 app.post('/chat/clear', (_req, res) => {
-  broadcastChatEvent({ type: 'clear_chat' });
+  lastClearTime = Date.now();
+  broadcastChatEvent({ type: 'clear_chat', clearTime: lastClearTime });
   res.json({ ok: true });
+});
+
+app.get('/api/chat-clear-time', (_req, res) => {
+  res.json({ clearTime: lastClearTime });
 });
 
 // ── Moderation routes ──────────────────────────────────────────────────────────

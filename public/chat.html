@@ -200,6 +200,22 @@
 
 <script>
 const MAX_MESSAGES = 20;
+const PAGE_LOAD_TIME = Date.now();
+let lastAppliedClear = 0;
+
+function clearChat(clearTime) {
+  if (clearTime <= lastAppliedClear) return;
+  lastAppliedClear = clearTime;
+  document.getElementById('chat').innerHTML = '';
+}
+
+// Poll as reliable fallback in case WS push is missed
+setInterval(async () => {
+  try {
+    const d = await fetch('/api/chat-clear-time').then(r => r.json());
+    if (d.clearTime > PAGE_LOAD_TIME) clearChat(d.clearTime);
+  } catch {}
+}, 3000);
 
 // Custom titles loaded from server at runtime — manage them at /setup
 let CUSTOM_TITLES = {};
@@ -404,9 +420,7 @@ function connectControlWs() {
     try {
       const msg = JSON.parse(e.data);
       if (msg.type === 'titles_update') CUSTOM_TITLES = msg.titles;
-      if (msg.type === 'clear_chat') {
-        document.getElementById('chat').innerHTML = '';
-      }
+      if (msg.type === 'clear_chat') clearChat(msg.clearTime || Date.now());
     } catch {}
   };
   ws.onclose = () => setTimeout(connectControlWs, 3000);
