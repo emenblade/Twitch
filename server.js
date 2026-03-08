@@ -16,6 +16,7 @@ const cfg = {
   callbackUrl:  (process.env.CALLBACK_URL        || '').replace(/\/$/, ''),
   port:          parseInt(process.env.PORT       || '3000', 10),
   dataDir:       process.env.DATA_DIR            || '/app/data',
+  mediaDir:      process.env.MEDIA_DIR           || '/StreamAssets/media',
 };
 cfg.redirectUri = cfg.callbackUrl || `${cfg.hostUrl}/auth/callback`;
 
@@ -40,7 +41,7 @@ function saveTitles(titles) {
 }
 
 // ── Custom commands ────────────────────────────────────────────────────────────
-const mediaDir     = path.join(cfg.dataDir, 'media');
+const mediaDir     = cfg.mediaDir;
 const commandsFile = path.join(cfg.dataDir, 'custom-commands.json');
 
 function loadCommands() {
@@ -53,7 +54,7 @@ function saveCommands(cmds) {
 }
 
 // ── Custom sounds ──────────────────────────────────────────────────────────────
-const soundsDir   = path.join(cfg.dataDir, 'sounds');
+const soundsDir   = path.join(cfg.mediaDir, 'sounds');
 const ALERT_TYPES = ['follow', 'sub', 'resub', 'giftsub', 'bits', 'raid'];
 const MIME_TO_EXT = {
   'audio/mpeg': 'mp3', 'audio/mp3': 'mp3',
