@@ -121,7 +121,7 @@ let eventSubWs     = null;
 let broadcasterId  = null;
 let reconnectTimer = null;
 
-async function connectEventSub(url = 'wss://eventsub.watcher.twitch.tv/ws') {
+async function connectEventSub(url = 'wss://eventsub.wss.twitch.tv/ws') {
   if (!loadTokens()) {
     console.log('No auth tokens — skipping EventSub. Visit /setup to connect Twitch.');
     return;
@@ -669,7 +669,7 @@ async function loadSoundsUI() {
     const stat = document.getElementById('sstat-' + type);
     const del  = document.getElementById('sdel-' + type);
     if (!stat) continue;
-    stat.textContent  = ext ? ext.toUpperCase() : '—';
+    stat.textContent  = ext ? `${type}.${ext}` : '—';
     stat.style.color  = ext ? '#00ff88' : '#4a2080';
     if (del) del.style.display = ext ? 'block' : 'none';
   }
