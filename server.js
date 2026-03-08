@@ -704,8 +704,8 @@ if (document.getElementById('sstat-follow')) loadSoundsUI();
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 const server   = http.createServer(app);
-const wss      = new WebSocketServer({ server, path: '/ws' });
-const chatWss  = new WebSocketServer({ server, path: '/chat-ws' });
+const wss      = new WebSocketServer({ server, path: '/ws',      perMessageDeflate: false });
+const chatWss  = new WebSocketServer({ server, path: '/chat-ws', perMessageDeflate: false });
 
 wss.on('connection', (ws) => {
   obsClients.add(ws);
