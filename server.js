@@ -326,6 +326,7 @@ function handleEvent(payload) {
   if (alert) {
     console.log('Alert fired:', alert);
     broadcast(alert);
+    broadcastChatEvent(alert);
   }
 }
 
@@ -583,7 +584,7 @@ function setupPageHtml(hasTokens, authUrl) {
   #event-feed::-webkit-scrollbar{width:4px}
   #event-feed::-webkit-scrollbar-thumb{background:#3d0080;border-radius:2px}
   .ev-empty{color:#3d0080;font-size:.75rem;padding:4px 2px}
-  .ev-row{display:flex;align-items:baseline;gap:8px;padding:5px 8px;border-left:2px solid #ffd700;border-radius:0 3px 3px 0;font-size:.75rem;flex-shrink:0;background:rgba(255,215,0,0.04)}
+  .ev-row{display:flex;align-items:baseline;gap:8px;padding:5px 8px;border-left:2px solid var(--ec,#ffd700);border-radius:0 3px 3px 0;font-size:.75rem;flex-shrink:0;background:rgba(0,0,0,0.15)}
   .ev-time{color:#4a2080;flex-shrink:0;font-size:.68rem;font-variant-numeric:tabular-nums}
   .ev-user{color:#ffd700;font-weight:bold;flex-shrink:0}
   .ev-detail{color:rgba(255,215,0,.65)}
@@ -786,23 +787,43 @@ function ts() {
   return [d.getHours(), d.getMinutes(), d.getSeconds()].map(n => String(n).padStart(2,'0')).join(':');
 }
 
+const FEED_COLORS = {
+  follow:'#00f5ff', sub:'#bf00ff', resub:'#9d00ff',
+  giftsub:'#ff2d78', bits:'#ffd700', raid:'#ff6b35', redemption:'#ffd700',
+};
+
+function feedDetail(m) {
+  switch (m.type) {
+    case 'follow':     return 'followed';
+    case 'sub':        return 'subscribed' + (m.tier ? ' \xb7 ' + escHtml(m.tier) : '');
+    case 'resub':      return 'resubbed \xb7 ' + m.months + ' months' + (m.tier ? ' \xb7 ' + escHtml(m.tier) : '') + (m.message ? ' \u2014 <span class="ev-input">&ldquo;' + escHtml(m.message) + '&rdquo;</span>' : '');
+    case 'giftsub':    return 'gifted ' + m.count + ' sub' + (m.count !== 1 ? 's' : '') + (m.tier ? ' \xb7 ' + escHtml(m.tier) : '');
+    case 'bits':       return 'cheered ' + Number(m.bits).toLocaleString() + ' bits' + (m.message ? ' \u2014 <span class="ev-input">&ldquo;' + escHtml(m.message) + '&rdquo;</span>' : '');
+    case 'raid':       return 'raided with ' + Number(m.viewers).toLocaleString() + ' viewers';
+    case 'redemption': return 'redeemed ' + escHtml(m.reward) + (m.cost ? ' <span style="color:#4a2080">(' + Number(m.cost).toLocaleString() + ' pts)</span>' : '') + (m.input ? ' \u2014 <span class="ev-input">&ldquo;' + escHtml(m.input) + '&rdquo;</span>' : '');
+    default:           return escHtml(m.type);
+  }
+}
+
 function addFeedEvent(data) {
   const feed = document.getElementById('event-feed');
   if (!feed) return;
   const empty = feed.querySelector('.ev-empty');
   if (empty) empty.remove();
+  const color = FEED_COLORS[data.type] || '#e0c3ff';
   const row = document.createElement('div');
   row.className = 'ev-row';
-  const inputHtml = data.input ? \` <span class="ev-input">&ldquo;\${escHtml(data.input)}&rdquo;</span>\` : '';
-  const cost = data.cost ? \` <span style="color:#4a2080">(\${Number(data.cost).toLocaleString()} pts)</span>\` : '';
-  row.innerHTML = \`<span class="ev-time">\${ts()}</span><span class="ev-user">\${escHtml(data.user)}</span><span class="ev-detail">redeemed \${escHtml(data.reward)}\${cost}</span>\${inputHtml}\`;
+  row.style.setProperty('--ec', color);
+  row.innerHTML = \`<span class="ev-time">\${ts()}</span><span class="ev-user" style="color:\${color}">\${escHtml(data.user)}</span><span class="ev-detail">\${feedDetail(data)}</span>\`;
   feed.appendChild(row);
   feed.scrollTop = feed.scrollHeight;
 }
 
+const FEED_TYPES = new Set(['follow','sub','resub','giftsub','bits','raid','redemption']);
+
 (function connectFeedWs() {
   const ws = new WebSocket(\`ws://\${location.host}/chat-ws\`);
-  ws.onmessage = e => { try { const m = JSON.parse(e.data); if (m.type === 'redemption') addFeedEvent(m); } catch {} };
+  ws.onmessage = e => { try { const m = JSON.parse(e.data); if (FEED_TYPES.has(m.type)) addFeedEvent(m); } catch {} };
   ws.onclose = () => setTimeout(connectFeedWs, 3000);
   ws.onerror = () => ws.close();
 })();
