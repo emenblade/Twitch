@@ -1004,56 +1004,35 @@ ${hasTokens ? `
       <table><tbody id="titles-tbody"></tbody></table>
     </div>
   </div>
-  <div class="card" style="flex:1;padding:14px">
-    <h2>Chat Preview</h2>
-    <iframe id="chat-preview" src="/chat.html" class="chat-frame" frameborder="0"></iframe>
-  </div>
-</div>
-
-<div class="bottom-row">
-  <div class="card">
-    <h2>OBS Browser Sources</h2>
-    <p>Alerts overlay — <strong>1920 × 300</strong>, transparent, bottom of scene:</p>
-    <div class="url">${cfg.hostUrl}/alerts.html</div>
-    <p style="margin-top:10px">Chat overlay — <strong>380 × 700</strong>, transparent, right side:</p>
-    <div class="url">${cfg.hostUrl}/chat.html</div>
-    <p style="margin-top:10px">Media player (custom commands) — <strong>1920 × 1080</strong>, transparent, top layer:</p>
-    <div class="url">${cfg.hostUrl}/media.html</div>
-  </div>
-  <div class="card">
-    <h2>Test Alerts</h2>
-    <p>Fire a test alert to your OBS overlay. Make sure it's open first.</p>
-    <div class="test-grid">
-      <button class="tbtn follow"  onclick="test('follow')">Follow</button>
-      <button class="tbtn sub"     onclick="test('sub')">Sub</button>
-      <button class="tbtn resub"   onclick="test('resub')">Resub</button>
-      <button class="tbtn giftsub" onclick="test('giftsub')">Gift Sub</button>
-      <button class="tbtn bits"    onclick="test('bits')">Bits</button>
-      <button class="tbtn raid"    onclick="test('raid')">Raid</button>
+  <div style="flex:1;display:flex;flex-direction:column;gap:16px">
+    <div class="card" style="padding:14px">
+      <h2>Chat Preview</h2>
+      <iframe id="chat-preview" src="/chat.html" class="chat-frame" frameborder="0"></iframe>
     </div>
-    <div id="test-fb"></div>
-  </div>
-  <div class="card">
-    <h2>Re-authorize</h2>
-    <p>Use this if you need to re-connect your Twitch account.</p>
-    <a class="btn" href="${authUrl}">Re-connect Twitch</a>
-  </div>
-  <div class="card">
-    <h2>Spotify Now Playing</h2>
-    <div class="sitem" style="margin-bottom:10px">
-      <div class="sdot ${loadSpotifyTokens() ? 'on' : 'off'}"></div>
-      <span style="color:${loadSpotifyTokens() ? '#00ff88' : '#ff2d78'}">${loadSpotifyTokens() ? 'Connected' : 'Not connected'}</span>
+    <div style="display:flex;gap:16px;align-items:flex-start">
+      <div class="card" style="flex:1">
+        <h2>Shoutout</h2>
+        <p style="font-size:.78rem">Chat command: <span style="color:#9146ff">!so @username</span> (mod+)</p>
+        <p style="margin-top:6px;font-size:.75rem">OBS Browser Source — <strong>600 × 160</strong>, transparent:</p>
+        <div class="url">${cfg.hostUrl}/shoutout.html</div>
+        <div class="so-row">
+          <input id="so-input" class="so-input" placeholder="@username" autocomplete="off" spellcheck="false">
+          <button class="btn" style="margin:0;padding:7px 18px;font-size:.65rem;background:linear-gradient(135deg,#5a10cc,#9146ff)" onclick="sendShoutout()">Send Shoutout</button>
+        </div>
+        <div id="so-fb" style="margin-top:8px;font-size:.72rem;min-height:1.1em;letter-spacing:1px"></div>
+      </div>
+      <div class="card" style="flex:1">
+        <h2>Queue</h2>
+        <p style="font-size:.78rem">Commands: <span style="color:#9146ff">!addme</span> · <span style="color:#9146ff">!leave</span> · <span style="color:#9146ff">!next</span> (mod+) · <span style="color:#9146ff">!clearqueue</span> (mod+)</p>
+        <p style="margin-top:6px;font-size:.75rem">OBS Browser Source — <strong>300 × 600</strong>, transparent:</p>
+        <div class="url">${cfg.hostUrl}/queue.html</div>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button class="btn" style="margin:0;padding:7px 16px;font-size:.65rem" onclick="queueNext()">Next</button>
+          <button class="btn" style="margin:0;padding:7px 16px;font-size:.65rem;background:linear-gradient(135deg,#6b0000,#c0000c)" onclick="queueClear()">Clear</button>
+        </div>
+        <div id="queue-list"><div class="q-empty">Queue is empty</div></div>
+      </div>
     </div>
-    ${loadSpotifyTokens() ? `
-    <p>Add this as a Browser Source in OBS:</p>
-    <div class="url">${cfg.hostUrl}/spotify.html</div>
-    <p style="margin-top:6px;font-size:.75rem;color:#7b2fff">500 × 140, transparent</p>
-    ` : `
-    <p>Set these env vars first, then connect:</p>
-    <p style="font-size:.75rem;color:#7b2fff;line-height:1.8">SPOTIFY_CLIENT_ID<br>SPOTIFY_CLIENT_SECRET<br>SPOTIFY_CALLBACK_URL</p>
-    <a class="btn" href="/auth/spotify" style="margin-top:8px;display:inline-block">Connect Spotify</a>
-    `}
-    <a class="btn" href="/auth/spotify" style="margin-top:8px;display:inline-block;background:linear-gradient(135deg,#0f7a3a,#1DB954)">Re-connect Spotify</a>
   </div>
 </div>
 
@@ -1170,28 +1149,50 @@ ${hasTokens ? `
   <div id="sound-fb" style="margin-top:10px;font-size:.72rem;min-height:1.1em;letter-spacing:1px"></div>
 </div>
 
-<div style="display:flex;gap:16px;margin-top:16px;align-items:flex-start">
-  <div class="card" style="flex:1">
-    <h2>Shoutout</h2>
-    <p style="font-size:.78rem">Chat command: <span style="color:#9146ff">!so @username</span> (mod+)</p>
-    <p style="margin-top:6px;font-size:.75rem">OBS Browser Source — <strong>600 × 160</strong>, transparent:</p>
-    <div class="url">${cfg.hostUrl}/shoutout.html</div>
-    <div class="so-row">
-      <input id="so-input" class="so-input" placeholder="@username" autocomplete="off" spellcheck="false">
-      <button class="btn" style="margin:0;padding:7px 18px;font-size:.65rem;background:linear-gradient(135deg,#5a10cc,#9146ff)" onclick="sendShoutout()">Send Shoutout</button>
-    </div>
-    <div id="so-fb" style="margin-top:8px;font-size:.72rem;min-height:1.1em;letter-spacing:1px"></div>
+<div class="bottom-row" style="margin-top:16px">
+  <div class="card">
+    <h2>OBS Browser Sources</h2>
+    <p>Alerts overlay — <strong>1920 × 300</strong>, transparent, bottom of scene:</p>
+    <div class="url">${cfg.hostUrl}/alerts.html</div>
+    <p style="margin-top:10px">Chat overlay — <strong>380 × 700</strong>, transparent, right side:</p>
+    <div class="url">${cfg.hostUrl}/chat.html</div>
+    <p style="margin-top:10px">Media player (custom commands) — <strong>1920 × 1080</strong>, transparent, top layer:</p>
+    <div class="url">${cfg.hostUrl}/media.html</div>
   </div>
-  <div class="card" style="flex:1">
-    <h2>Queue</h2>
-    <p style="font-size:.78rem">Commands: <span style="color:#9146ff">!addme</span> · <span style="color:#9146ff">!leave</span> · <span style="color:#9146ff">!next</span> (mod+) · <span style="color:#9146ff">!clearqueue</span> (mod+)</p>
-    <p style="margin-top:6px;font-size:.75rem">OBS Browser Source — <strong>300 × 600</strong>, transparent:</p>
-    <div class="url">${cfg.hostUrl}/queue.html</div>
-    <div style="display:flex;gap:8px;margin-top:10px">
-      <button class="btn" style="margin:0;padding:7px 16px;font-size:.65rem" onclick="queueNext()">Next</button>
-      <button class="btn" style="margin:0;padding:7px 16px;font-size:.65rem;background:linear-gradient(135deg,#6b0000,#c0000c)" onclick="queueClear()">Clear</button>
+  <div class="card">
+    <h2>Test Alerts</h2>
+    <p>Fire a test alert to your OBS overlay. Make sure it's open first.</p>
+    <div class="test-grid">
+      <button class="tbtn follow"  onclick="test('follow')">Follow</button>
+      <button class="tbtn sub"     onclick="test('sub')">Sub</button>
+      <button class="tbtn resub"   onclick="test('resub')">Resub</button>
+      <button class="tbtn giftsub" onclick="test('giftsub')">Gift Sub</button>
+      <button class="tbtn bits"    onclick="test('bits')">Bits</button>
+      <button class="tbtn raid"    onclick="test('raid')">Raid</button>
     </div>
-    <div id="queue-list"><div class="q-empty">Queue is empty</div></div>
+    <div id="test-fb"></div>
+  </div>
+  <div class="card">
+    <h2>Re-authorize</h2>
+    <p>Use this if you need to re-connect your Twitch account.</p>
+    <a class="btn" href="${authUrl}">Re-connect Twitch</a>
+  </div>
+  <div class="card">
+    <h2>Spotify Now Playing</h2>
+    <div class="sitem" style="margin-bottom:10px">
+      <div class="sdot ${loadSpotifyTokens() ? 'on' : 'off'}"></div>
+      <span style="color:${loadSpotifyTokens() ? '#00ff88' : '#ff2d78'}">${loadSpotifyTokens() ? 'Connected' : 'Not connected'}</span>
+    </div>
+    ${loadSpotifyTokens() ? `
+    <p>Add this as a Browser Source in OBS:</p>
+    <div class="url">${cfg.hostUrl}/spotify.html</div>
+    <p style="margin-top:6px;font-size:.75rem;color:#7b2fff">500 × 140, transparent</p>
+    ` : `
+    <p>Set these env vars first, then connect:</p>
+    <p style="font-size:.75rem;color:#7b2fff;line-height:1.8">SPOTIFY_CLIENT_ID<br>SPOTIFY_CLIENT_SECRET<br>SPOTIFY_CALLBACK_URL</p>
+    <a class="btn" href="/auth/spotify" style="margin-top:8px;display:inline-block">Connect Spotify</a>
+    `}
+    <a class="btn" href="/auth/spotify" style="margin-top:8px;display:inline-block;background:linear-gradient(135deg,#0f7a3a,#1DB954)">Re-connect Spotify</a>
   </div>
 </div>
 
