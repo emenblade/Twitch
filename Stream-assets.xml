@@ -110,6 +110,42 @@
     Mask="false"></Config>
 
   <!-- ═══════════════════════════════════════════════════════════════
+       SPOTIFY (optional — for Now Playing overlay)
+  ════════════════════════════════════════════════════════════════ -->
+  <Config
+    Name="Spotify Client ID"
+    Target="SPOTIFY_CLIENT_ID"
+    Default=""
+    Mode=""
+    Description="Client ID from your Spotify Developer app. Get it at developer.spotify.com/dashboard."
+    Type="Variable"
+    Display="always"
+    Required="false"
+    Mask="false"></Config>
+
+  <Config
+    Name="Spotify Client Secret"
+    Target="SPOTIFY_CLIENT_SECRET"
+    Default=""
+    Mode=""
+    Description="Client Secret from your Spotify Developer app. Keep this private."
+    Type="Variable"
+    Display="always"
+    Required="false"
+    Mask="true"></Config>
+
+  <Config
+    Name="Spotify Callback URL"
+    Target="SPOTIFY_CALLBACK_URL"
+    Default=""
+    Mode=""
+    Description="HTTPS redirect URI for Spotify OAuth. Must match exactly what you set in your Spotify app. Example: https://yourdomain.com/auth/spotify/callback"
+    Type="Variable"
+    Display="always"
+    Required="false"
+    Mask="false"></Config>
+
+  <!-- ═══════════════════════════════════════════════════════════════
        OPTIONAL
   ════════════════════════════════════════════════════════════════ -->
   <Config

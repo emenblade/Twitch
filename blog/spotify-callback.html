@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Spotify Auth Relay</title>
+  <style>
+    body { background: #0d0015; color: #e0c3ff; font-family: monospace;
+           display: flex; align-items: center; justify-content: center;
+           min-height: 100vh; margin: 0; }
+    p { letter-spacing: 2px; opacity: 0.7; }
+  </style>
+</head>
+<body>
+  <p>Redirecting...</p>
+  <script>
+    const NAS = 'http://192.168.1.10:3000';
+    window.location.replace(NAS + '/auth/spotify/callback' + window.location.search);
+  </script>
+</body>
+</html>
