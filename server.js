@@ -141,6 +141,9 @@ const CHAT_COMMANDS = {
 // ── Queue state ────────────────────────────────────────────────────────────────
 const queue = []; // [{ username, displayName }]
 
+// ── Chat presence ──────────────────────────────────────────────────────────────
+const chatters = new Set(); // lowercase usernames currently in IRC channel
+
 // ── Cooldown tracking ──────────────────────────────────────────────────────────
 const commandState = {}; // { [key]: { lastTriggered: 0, triggeredThisStream: false } }
 
@@ -304,21 +307,33 @@ async function handleShoutout(username) {
 
 function connectChatReader() {
   if (!cfg.channel) return;
+  chatters.clear();
   const ws = new WebSocket('wss://irc-ws.chat.twitch.tv');
   ws.on('open', () => {
-    ws.send('CAP REQ :twitch.tv/tags twitch.tv/commands');
+    ws.send('CAP REQ :twitch.tv/tags twitch.tv/commands twitch.tv/membership');
     ws.send('PASS SCHMOOPIIE');
     ws.send('NICK justinfan' + Math.floor(Math.random() * 99999));
     ws.send('JOIN #' + cfg.channel);
   });
   ws.on('message', (raw) => {
     for (const line of raw.toString().split('\r\n')) {
+      if (!line) continue;
       if (line.startsWith('PING')) { ws.send('PONG :tmi.twitch.tv'); continue; }
+      // NAMES list chunks (353)
+      const namesMatch = line.match(/^:\S+ 353 \S+ [=*@] #\S+ :(.+)$/);
+      if (namesMatch) { for (const u of namesMatch[1].split(' ')) if (u) chatters.add(u.toLowerCase()); continue; }
+      // JOIN
+      const joinMatch = line.match(/^:(\w+)!\S+ JOIN #\S+$/);
+      if (joinMatch) { chatters.add(joinMatch[1].toLowerCase()); continue; }
+      // PART
+      const partMatch = line.match(/^:(\w+)!\S+ PART #\S+$/);
+      if (partMatch) { chatters.delete(partMatch[1].toLowerCase()); continue; }
+      // PRIVMSG
       const match = line.match(/^@(\S+) :(\w+)!\S+ PRIVMSG #\S+ :(.*)$/);
-      if (match) handleChatCommand(match[3], parseChatTags(match[1], match[2]));
+      if (match) { chatters.add(match[2].toLowerCase()); handleChatCommand(match[3], parseChatTags(match[1], match[2])); }
     }
   });
-  ws.on('close', () => setTimeout(connectChatReader, 5000));
+  ws.on('close', () => { chatters.clear(); setTimeout(connectChatReader, 5000); });
   ws.on('error', () => {});
 }
 
@@ -861,16 +876,8 @@ app.get('/command/:name', (req, res) => {
   res.json({ ok: true, command: key });
 });
 
-app.get('/api/viewers', async (_req, res) => {
-  try {
-    const r = await fetch(`https://api.twitch.tv/helix/streams?user_login=${cfg.channel}`, { headers: twitchHeaders() });
-    if (!r.ok) return res.json({ live: false, viewers: 0 });
-    const d = await r.json();
-    const stream = d.data?.[0];
-    res.json({ live: !!stream, viewers: stream?.viewer_count ?? 0 });
-  } catch {
-    res.json({ live: false, viewers: 0 });
-  }
+app.get('/api/chatters', (_req, res) => {
+  res.json({ count: chatters.size, users: [...chatters].sort() });
 });
 
 app.get('/status', (_req, res) => {
@@ -1022,11 +1029,10 @@ ${hasTokens ? `
         <h2>Chat Preview</h2>
         <iframe id="chat-preview" src="/chat.html" class="chat-frame" frameborder="0"></iframe>
       </div>
-      <div class="card" style="flex:2;display:flex;flex-direction:column">
-        <h2>Viewers</h2>
-        <div id="viewer-status" style="font-size:.68rem;letter-spacing:2px;color:#555;margin-bottom:16px">—</div>
-        <div id="viewer-count" style="font-family:'Orbitron',sans-serif;color:#00f5ff;font-size:2.8rem;text-align:center;flex:1;display:flex;align-items:center;justify-content:center">—</div>
-        <div id="viewer-updated" style="font-size:.62rem;color:#3d3d5c;text-align:center;margin-top:12px;letter-spacing:1px">—</div>
+      <div class="card" style="flex:2;display:flex;flex-direction:column;min-width:0">
+        <h2>In Chat <span id="chatter-count" style="color:#7b2fff;font-size:.6rem;letter-spacing:1px"></span></h2>
+        <div id="chatter-list" style="flex:1;overflow-y:auto;max-height:520px;font-size:.72rem;font-family:'Share Tech Mono',monospace;color:#c9a0dc;line-height:1.8;word-break:break-all"></div>
+        <div id="chatter-updated" style="font-size:.62rem;color:#3d3d5c;margin-top:10px;letter-spacing:1px">—</div>
       </div>
     </div>
     <div style="display:flex;gap:16px;align-items:flex-start">
@@ -1527,29 +1533,22 @@ async function queueRemove(username) {
 // Load initial queue state
 fetch('/queue').then(function(r) { return r.json(); }).then(renderQueue).catch(function() {});
 
-// ── Viewers polling ──────────────────────────────────────────────────
-async function refreshViewers() {
+// ── Chatters polling ─────────────────────────────────────────────────
+async function refreshChatters() {
   try {
-    const r = await fetch('/api/viewers');
+    const r = await fetch('/api/chatters');
     const d = await r.json();
-    const countEl = document.getElementById('viewer-count');
-    const statusEl = document.getElementById('viewer-status');
-    const updatedEl = document.getElementById('viewer-updated');
-    if (!countEl) return;
-    if (d.live) {
-      countEl.textContent = d.viewers.toLocaleString();
-      statusEl.textContent = '● LIVE';
-      statusEl.style.color = '#00c853';
-    } else {
-      countEl.textContent = '—';
-      statusEl.textContent = '○ OFFLINE';
-      statusEl.style.color = '#555';
-    }
+    const listEl = document.getElementById('chatter-list');
+    const countEl = document.getElementById('chatter-count');
+    const updatedEl = document.getElementById('chatter-updated');
+    if (!listEl) return;
+    countEl.textContent = '(' + d.count + ')';
+    listEl.textContent = d.users.join('\\n');
     updatedEl.textContent = 'UPDATED ' + new Date().toLocaleTimeString();
   } catch {}
 }
-refreshViewers();
-setInterval(refreshViewers, 30000);
+refreshChatters();
+setInterval(refreshChatters, 15000);
 
 // ── Shoutout UI ─────────────────────────────────────────────────────
 async function sendShoutout() {
