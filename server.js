@@ -1204,8 +1204,8 @@ async function loadCustomCmdsUI() {
       '<td style="padding:7px 10px;color:#c9a0dc;font-size:.76rem">' + escHtml(cmd.desc) + '</td>' +
       '<td style="padding:7px 10px;color:#9d77cc;font-size:.72rem;white-space:nowrap">' + permLabel + '</td>' +
       '<td style="padding:7px 10px;color:#9d77cc;font-size:.72rem;white-space:nowrap">' + cdLabel + '</td>' +
-      '<td style="padding:7px 4px;white-space:nowrap"><button onclick="triggerCmd(\'' + name + '\',\'nc-reset-fb\')" class="btn" style="padding:4px 12px;margin:0;font-size:.6rem;letter-spacing:1px">Trigger</button></td>' +
-      '<td style="padding:7px 0;white-space:nowrap;text-align:right"><button onclick="deleteCustomCmd(\'' + name + '\')" style="background:transparent;border:1px solid #ff2d78;color:#ff2d78;border-radius:3px;padding:3px 9px;cursor:pointer;font-family:inherit;font-size:.6rem">Delete</button></td>';
+      '<td style="padding:7px 4px;white-space:nowrap"><button onclick="triggerCmd(\\\'' + name + '\\\',\\\'nc-reset-fb\\\')" class="btn" style="padding:4px 12px;margin:0;font-size:.6rem;letter-spacing:1px">Trigger</button></td>' +
+      '<td style="padding:7px 0;white-space:nowrap;text-align:right"><button onclick="deleteCustomCmd(\\\'' + name + '\\')" style="background:transparent;border:1px solid #ff2d78;color:#ff2d78;border-radius:3px;padding:3px 9px;cursor:pointer;font-family:inherit;font-size:.6rem">Delete</button></td>';
     tbody.appendChild(tr);
   }
 }
