@@ -102,10 +102,52 @@ async function getSpotifyToken() {
 
 let currentTrack = null;
 const spotifyClients = new Set();
+let spotifyMode = 'auto'; // 'auto' | 'hidden'
 
 function broadcastSpotify(data) {
   const msg = JSON.stringify(data);
   spotifyClients.forEach(ws => { if (ws.readyState === WebSocket.OPEN) ws.send(msg); });
+}
+
+// ── Chat commands ──────────────────────────────────────────────────────────────
+const CHAT_COMMANDS = {
+  '!song': {
+    desc: 'Shows the current Spotify track for 10 seconds',
+    action() { broadcastSpotify({ type: 'show_now', duration: 10000 }); },
+  },
+  '!hidespotify': {
+    desc: 'Stops the Spotify overlay from auto-popping on track change',
+    action() { spotifyMode = 'hidden'; broadcastSpotify({ type: 'set_mode', mode: 'hidden' }); },
+  },
+  '!showspotify': {
+    desc: 'Re-enables the Spotify overlay 15-second auto-show on track change',
+    action() { spotifyMode = 'auto'; broadcastSpotify({ type: 'set_mode', mode: 'auto' }); },
+  },
+};
+
+function handleChatCommand(text) {
+  const cmd = CHAT_COMMANDS[text.trim().toLowerCase()];
+  if (cmd) { console.log('Chat command:', text.trim()); cmd.action(); }
+}
+
+function connectChatReader() {
+  if (!cfg.channel) return;
+  const ws = new WebSocket('wss://irc-ws.chat.twitch.tv');
+  ws.on('open', () => {
+    ws.send('CAP REQ :twitch.tv/tags twitch.tv/commands');
+    ws.send('PASS SCHMOOPIIE');
+    ws.send('NICK justinfan' + Math.floor(Math.random() * 99999));
+    ws.send('JOIN #' + cfg.channel);
+  });
+  ws.on('message', (raw) => {
+    for (const line of raw.toString().split('\r\n')) {
+      if (line.startsWith('PING')) { ws.send('PONG :tmi.twitch.tv'); continue; }
+      const match = line.match(/^@\S+ :\S+ PRIVMSG #\S+ :(.*)$/);
+      if (match) handleChatCommand(match[1]);
+    }
+  });
+  ws.on('close', () => setTimeout(connectChatReader, 5000));
+  ws.on('error', () => {});
 }
 
 async function pollSpotify() {
@@ -510,6 +552,14 @@ app.get('/auth/spotify/callback', async (req, res) => {
   res.send('<script>window.location="/setup"</script>');
 });
 
+app.get('/command/:name', (req, res) => {
+  const key = '!' + req.params.name.toLowerCase();
+  const cmd = CHAT_COMMANDS[key];
+  if (!cmd) return res.status(404).json({ error: 'Unknown command' });
+  cmd.action();
+  res.json({ ok: true, command: key });
+});
+
 app.get('/status', (_req, res) => {
   res.json({
     configured:         !!(cfg.clientId && cfg.clientSecret && cfg.channel),
@@ -692,6 +742,25 @@ ${hasTokens ? `
 </div>
 
 <div class="card" style="margin-top:16px">
+  <h2>Chat Commands</h2>
+  <p>Active in <strong>#${cfg.channel}</strong>. Click Trigger to fire without typing in chat.</p>
+  <table style="margin-top:10px;width:100%">
+    <tbody>
+      ${Object.entries(CHAT_COMMANDS).map(([cmd, { desc }], i, arr) => {
+        const name = cmd.slice(1);
+        const border = i < arr.length - 1 ? 'border-bottom:1px solid #0d0015' : '';
+        return `<tr style="${border}">
+          <td style="padding:8px 14px 8px 0;color:#00f5ff;font-size:.82rem;white-space:nowrap;font-family:'Share Tech Mono',monospace">${cmd}</td>
+          <td style="padding:8px 14px;color:#c9a0dc;font-size:.78rem;width:100%">${desc}</td>
+          <td style="padding:8px 0;white-space:nowrap"><button onclick="triggerCmd('${name}')" class="btn" style="padding:5px 14px;margin:0;font-size:.62rem;letter-spacing:1px">Trigger</button></td>
+        </tr>`;
+      }).join('')}
+    </tbody>
+  </table>
+  <div id="cmd-fb" style="margin-top:8px;font-size:.72rem;min-height:1.1em;letter-spacing:1px"></div>
+</div>
+
+<div class="card" style="margin-top:16px">
   <h2>Custom Alert Sounds</h2>
   <p>Upload audio files (MP3, WAV, OGG, WEBM, FLAC — max 20 MB each) to replace the built-in synth sounds. Changes take effect immediately in the browser source.</p>
   <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-top:10px">
@@ -864,6 +933,17 @@ async function removeSound(type) {
   loadSoundsUI();
 }
 
+async function triggerCmd(name) {
+  const fb = document.getElementById('cmd-fb');
+  if (fb) { fb.style.color = '#00f5ff'; fb.textContent = 'Triggering !' + name + '...'; }
+  try {
+    const r = await fetch('/command/' + name);
+    const d = await r.json();
+    if (fb) { fb.style.color = d.ok ? '#00ff88' : '#ff2d78'; fb.textContent = d.ok ? '\u2713 !' + name + ' triggered' : '\u2717 ' + (d.error || 'failed'); }
+  } catch { if (fb) { fb.style.color = '#ff2d78'; fb.textContent = '\u2717 Request failed'; } }
+  setTimeout(() => { const f = document.getElementById('cmd-fb'); if (f) f.textContent = ''; }, 2000);
+}
+
 if (document.getElementById('sstat-follow')) loadSoundsUI();
 </script>
 
@@ -912,6 +992,7 @@ chatWss.on('connection', (ws) => {
 spotifyWss.on('connection', (ws) => {
   spotifyClients.add(ws);
   if (currentTrack) ws.send(JSON.stringify(currentTrack));
+  ws.send(JSON.stringify({ type: 'set_mode', mode: spotifyMode }));
   ws.on('close', () => spotifyClients.delete(ws));
   ws.on('error', () => spotifyClients.delete(ws));
 });
@@ -929,7 +1010,9 @@ server.listen(cfg.port, async () => {
 
   if (loadTokens()) {
     await connectEventSub();
+    connectChatReader();
   } else {
     console.log('No tokens found — visit /setup to connect Twitch');
+    connectChatReader();
   }
 });

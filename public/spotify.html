@@ -257,6 +257,7 @@ let visible       = false;
 let hideTimer     = null;
 let rafId         = null;
 let currentTitle  = null;  // track song changes
+let mode          = 'auto'; // 'auto' | 'hidden' — controlled by !showspotify / !hidespotify
 
 // Interpolation state
 let trackData    = null;   // latest message from server
@@ -328,13 +329,13 @@ function applyTrack(data) {
 
   if (data.is_playing) {
     startRaf();
-    if (songChanged) {
-      // New song — slide in, auto-hide after 15s
+    if (songChanged && mode === 'auto') {
+      // New song and auto mode — slide in, auto-hide after 15s
       clearTimeout(hideTimer);
       showPanel();
       hideTimer = setTimeout(hidePanel, 15000);
     }
-    // Same song: RAF keeps running for smooth progress, panel state unchanged
+    // Hidden mode or same song: RAF keeps running, panel state unchanged
   } else {
     // Paused — freeze progress display, don't show if already hidden
     stopRaf();
@@ -353,6 +354,19 @@ function handleMessage(data) {
     trackData    = null;
     clearTimeout(hideTimer);
     hidePanel();
+  } else if (data.type === 'show_now') {
+    // !song command — show regardless of mode, for specified duration
+    if (trackData) {
+      clearTimeout(hideTimer);
+      showPanel();
+      hideTimer = setTimeout(hidePanel, data.duration || 10000);
+    }
+  } else if (data.type === 'set_mode') {
+    mode = data.mode;
+    if (mode === 'hidden') {
+      clearTimeout(hideTimer);
+      hidePanel();
+    }
   }
 }
 
