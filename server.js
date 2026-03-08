@@ -816,7 +816,7 @@ async function loadSoundsUI() {
     const stat = document.getElementById('sstat-' + type);
     const del  = document.getElementById('sdel-' + type);
     if (!stat) continue;
-    stat.textContent  = ext ? `${type}.${ext}` : '—';
+    stat.textContent  = ext ? type + '.' + ext : '—';
     stat.style.color  = ext ? '#00ff88' : '#4a2080';
     if (del) del.style.display = ext ? 'block' : 'none';
   }
