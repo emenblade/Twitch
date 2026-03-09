@@ -72,6 +72,18 @@ function findSoundFile(type) {
   return null;
 }
 
+// ── Bot token storage ─────────────────────────────────────────────────────────
+const botTokensFile = path.join(cfg.dataDir, 'bot-tokens.json');
+
+function loadBotTokens() {
+  try { return JSON.parse(fs.readFileSync(botTokensFile, 'utf8')); }
+  catch { return null; }
+}
+function saveBotTokens(tokens) {
+  fs.mkdirSync(cfg.dataDir, { recursive: true });
+  fs.writeFileSync(botTokensFile, JSON.stringify(tokens, null, 2));
+}
+
 // ── Spotify token storage + polling ───────────────────────────────────────────
 const spotifyTokensFile = path.join(cfg.dataDir, 'spotify-tokens.json');
 
@@ -220,6 +232,7 @@ function handleChatCommand(text, tags = { badgeSet: new Set(), username: '', dis
     queue.push({ username: uname, displayName: dname });
     console.log('Queue: added', uname, '(total:', queue.length + ')');
     broadcastQueue();
+    sendChatMessage(`@${dname} you've been added to the queue! You're #${queue.length} in line.`).catch(() => {});
     return;
   }
 
@@ -230,6 +243,7 @@ function handleChatCommand(text, tags = { badgeSet: new Set(), username: '', dis
       queue.splice(idx, 1);
       console.log('Queue: removed', uname, '(total:', queue.length + ')');
       broadcastQueue();
+      sendChatMessage(`@${tags.displayName || uname} you've been removed from the queue.`).catch(() => {});
     }
     return;
   }
@@ -242,6 +256,10 @@ function handleChatCommand(text, tags = { badgeSet: new Set(), username: '', dis
       const removed = queue.shift();
       console.log('Queue: next — removed', removed.username, '(total:', queue.length + ')');
       broadcastQueue();
+      const msg = queue.length > 0
+        ? `@${removed.displayName || removed.username} removed from queue. Next up: @${queue[0].displayName || queue[0].username}!`
+        : `@${removed.displayName || removed.username} removed from queue. Queue is now empty.`;
+      sendChatMessage(msg).catch(() => {});
     }
     return;
   }
@@ -391,6 +409,45 @@ function loadTokens() {
 function saveTokens(tokens) {
   fs.mkdirSync(cfg.dataDir, { recursive: true });
   fs.writeFileSync(tokensFile, JSON.stringify(tokens, null, 2));
+}
+
+async function refreshBotToken() {
+  const tokens = loadBotTokens();
+  if (!tokens?.refresh_token) throw new Error('No bot refresh token stored');
+  const res = await fetch('https://id.twitch.tv/oauth2/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type:    'refresh_token',
+      refresh_token:  tokens.refresh_token,
+      client_id:      cfg.clientId,
+      client_secret:  cfg.clientSecret,
+    }),
+  });
+  if (!res.ok) throw new Error(`Bot token refresh failed: ${res.status} ${await res.text()}`);
+  const data = await res.json();
+  saveBotTokens({ ...tokens, access_token: data.access_token, refresh_token: data.refresh_token || tokens.refresh_token });
+  console.log('Bot access token refreshed');
+  return data.access_token;
+}
+
+async function sendChatMessage(text) {
+  const tokens = loadBotTokens();
+  if (!tokens?.access_token || !tokens?.bot_id) return;
+  if (!broadcasterId) return;
+  const doSend = async (accessToken) => fetch('https://api.twitch.tv/helix/chat/messages', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${accessToken}`, 'Client-Id': cfg.clientId, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ broadcaster_id: broadcasterId, sender_id: tokens.bot_id, message: text }),
+  });
+  let res = await doSend(tokens.access_token);
+  if (res.status === 401) {
+    try {
+      const newToken = await refreshBotToken();
+      res = await doSend(newToken);
+    } catch (e) { console.error('Bot token refresh failed:', e.message); return; }
+  }
+  if (!res.ok) console.error('sendChatMessage failed:', res.status, await res.text());
 }
 
 async function refreshAccessToken() {
@@ -649,9 +706,14 @@ function broadcastQueue() {
 
 // ── Token auto-refresh every 2 hours ─────────────────────────────────────────
 setInterval(async () => {
-  if (!loadTokens()) return;
-  try { await refreshAccessToken(); }
-  catch (err) { console.error('Scheduled token refresh failed:', err.message); }
+  if (loadTokens()) {
+    try { await refreshAccessToken(); }
+    catch (err) { console.error('Scheduled token refresh failed:', err.message); }
+  }
+  if (loadBotTokens()) {
+    try { await refreshBotToken(); }
+    catch (err) { console.error('Scheduled bot token refresh failed:', err.message); }
+  }
 }, 2 * 60 * 60 * 1000);
 
 // Poll Spotify every 5 s (no-op if not configured)
@@ -672,7 +734,7 @@ app.get('/setup', (req, res) => {
 });
 
 app.get('/auth/callback', async (req, res) => {
-  const { code, error } = req.query;
+  const { code, error, state } = req.query;
   if (error || !code) return res.send(errorPage(`OAuth error: ${error ?? 'no code returned'}`));
 
   const tokenRes = await fetch('https://id.twitch.tv/oauth2/token', {
@@ -693,6 +755,21 @@ app.get('/auth/callback', async (req, res) => {
   }
 
   const tokens = await tokenRes.json();
+
+  // Bot auth flow — state starts with 'bot_'
+  if (typeof state === 'string' && state.startsWith('bot_')) {
+    const userRes = await fetch('https://api.twitch.tv/helix/users', {
+      headers: { 'Authorization': `Bearer ${tokens.access_token}`, 'Client-Id': cfg.clientId },
+    });
+    const userData = await userRes.json();
+    const botId    = userData.data?.[0]?.id;
+    const botLogin = userData.data?.[0]?.login;
+    saveBotTokens({ access_token: tokens.access_token, refresh_token: tokens.refresh_token, bot_id: botId, bot_login: botLogin });
+    console.log(`Bot auth complete — ${botLogin} (${botId})`);
+    return res.send('<script>window.location="/setup"</script>');
+  }
+
+  // Broadcaster auth flow
   saveTokens({ access_token: tokens.access_token, refresh_token: tokens.refresh_token });
   console.log('Twitch auth complete — starting EventSub');
   connectEventSub();
@@ -957,6 +1034,7 @@ app.get('/api/chatters', (_req, res) => {
 });
 
 app.get('/status', (_req, res) => {
+  const bot = loadBotTokens();
   res.json({
     configured:         !!(cfg.clientId && cfg.clientSecret && cfg.channel),
     authenticated:      !!loadTokens(),
@@ -967,6 +1045,8 @@ app.get('/status', (_req, res) => {
     spotify_configured: !!spotifyCfg.clientId,
     spotify_connected:  !!loadSpotifyTokens(),
     current_track:      currentTrack,
+    bot_connected:      !!bot,
+    bot_login:          bot?.bot_login || null,
   });
 });
 
@@ -979,6 +1059,17 @@ function buildAuthUrl() {
     scope:         'moderator:read:followers channel:read:subscriptions bits:read channel:read:redemptions moderator:manage:banned_users',
     force_verify:  'true',
     state:          crypto.randomBytes(16).toString('hex'),
+  });
+}
+
+function buildBotAuthUrl() {
+  return 'https://id.twitch.tv/oauth2/authorize?' + new URLSearchParams({
+    client_id:     cfg.clientId,
+    redirect_uri:  cfg.redirectUri,
+    response_type: 'code',
+    scope:         'user:write:chat',
+    force_verify:  'true',
+    state:          'bot_' + crypto.randomBytes(16).toString('hex'),
   });
 }
 
@@ -1281,6 +1372,18 @@ ${hasTokens ? `
     <h2>Re-authorize</h2>
     <p>Use this if you need to re-connect your Twitch account.</p>
     <a class="btn" href="${authUrl}">Re-connect Twitch</a>
+  </div>
+  <div class="card">
+    <h2>Bot Account</h2>
+    ${(() => {
+      const bot = loadBotTokens();
+      return `<div class="sitem" style="margin-bottom:10px">
+        <div class="sdot ${bot ? 'on' : 'off'}"></div>
+        <span style="color:${bot ? '#00ff88' : '#ff2d78'}">${bot ? `Connected as ${bot.bot_login || 'bot'}` : 'Not connected'}</span>
+      </div>
+      <p style="font-size:.78rem;margin-bottom:8px">AngryToasterAI sends chat responses for queue commands. Make sure it's <strong>modded</strong> in your channel.</p>
+      <a class="btn" href="${buildBotAuthUrl()}" style="display:inline-block">${bot ? 'Re-connect Bot' : 'Connect Bot Account'}</a>`;
+    })()}
   </div>
   <div class="card">
     <h2>Spotify Now Playing</h2>
