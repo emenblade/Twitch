@@ -153,6 +153,24 @@ const CHAT_COMMANDS = {
 // ── Queue state ────────────────────────────────────────────────────────────────
 const queue = []; // [{ username, displayName }]
 
+// ── Rotation counters + message templates ─────────────────────────────────────
+let soRotateIdx = 0;
+let followageRotateIdx = 0;
+
+const SO_MESSAGES = [
+  (d, g, l) => `Go check out @${d}!${g ? ` They were last playing ${g}` : ''} → twitch.tv/${l}`,
+  (d, g, l) => `Shoutout to @${d}! Go give them a follow${g ? `, last seen playing ${g}` : ''} → twitch.tv/${l}`,
+  (d, g, l) => `Oi chat, go show @${d} some love!${g ? ` Last playing ${g}` : ''} → twitch.tv/${l}`,
+];
+
+const FOLLOWAGE_MESSAGES = [
+  (n, dur)       => `@${n} has been here for ${dur}. Touch grass. I'm begging.`,
+  (n, dur)       => `${dur}?! @${n} what are you doing with your life lmaooo`,
+  (n, dur, date) => `@${n} followed on ${date}. They haven't left since. Please send help.`,
+  (n, dur)       => `In the ${dur} @${n} has been following, they could have learned Spanish. They did not.`,
+  (n, dur, date) => `@${n} has been lurking since ${date}. The parasocial is REAL.`,
+];
+
 // ── Chat presence ──────────────────────────────────────────────────────────────
 const chatters = new Set(); // lowercase usernames currently in IRC channel
 
@@ -181,6 +199,7 @@ function recordTrigger(key) {
 function parseChatTags(raw, ircNick = '') {
   const badgeSet = new Set();
   let displayName = ircNick;
+  let userId = '';
   for (const part of raw.split(';')) {
     if (part.startsWith('badges=')) {
       for (const b of part.slice(7).split(',')) {
@@ -190,13 +209,15 @@ function parseChatTags(raw, ircNick = '') {
     } else if (part.startsWith('display-name=')) {
       const dn = part.slice(13);
       if (dn) displayName = dn;
+    } else if (part.startsWith('user-id=')) {
+      userId = part.slice(8);
     } else if (part === 'mod=1') {
       badgeSet.add('moderator');
     } else if (part === 'user-type=mod') {
       badgeSet.add('moderator');
     }
   }
-  return { badgeSet, username: ircNick.toLowerCase(), displayName };
+  return { badgeSet, username: ircNick.toLowerCase(), displayName, userId };
 }
 
 function hasPermission(badgeSet, permission) {
@@ -206,9 +227,16 @@ function hasPermission(badgeSet, permission) {
   return false;
 }
 
-function handleChatCommand(text, tags = { badgeSet: new Set(), username: '', displayName: '' }) {
+function handleChatCommand(text, tags = { badgeSet: new Set(), username: '', displayName: '', userId: '' }) {
   const trimmed = text.trim();
   const lower   = trimmed.toLowerCase();
+
+  // ── Followage ─────────────────────────────────────────────────────────────
+  if (lower === '!followage' || lower.startsWith('!followage ')) {
+    const target = lower.startsWith('!followage ') ? lower.split(/\s+/)[1]?.replace(/^@/, '') : null;
+    handleFollowage(tags, target).catch(() => {});
+    return;
+  }
 
   // ── Shoutout ──────────────────────────────────────────────────────────────
   if (lower.startsWith('!so ') || lower.startsWith('!shoutout ')) {
@@ -303,7 +331,60 @@ function handleChatCommand(text, tags = { badgeSet: new Set(), username: '', dis
 
   recordTrigger(lower);
   console.log('Custom command fired:', lower);
-  broadcastMedia({ type: 'play_media', file: cmd.file, fileType: cmd.fileType });
+  if (cmd.fileType === 'text') {
+    sendChatMessage(cmd.replyText || '').catch(() => {});
+  } else {
+    broadcastMedia({ type: 'play_media', file: cmd.file, fileType: cmd.fileType });
+  }
+}
+
+async function handleFollowage(tags, targetLogin = null) {
+  if (!broadcasterId) return;
+
+  let userId, displayName;
+  if (targetLogin) {
+    const res  = await fetch(`https://api.twitch.tv/helix/users?login=${targetLogin}`, { headers: twitchHeaders() });
+    const data = await res.json();
+    const user = data.data?.[0];
+    if (!user) { sendChatMessage(`Couldn't find user: ${targetLogin}`).catch(() => {}); return; }
+    userId = user.id;
+    displayName = user.display_name;
+  } else {
+    userId = tags.userId;
+    displayName = tags.displayName || tags.username;
+    if (!userId) {
+      const res  = await fetch(`https://api.twitch.tv/helix/users?login=${tags.username}`, { headers: twitchHeaders() });
+      const data = await res.json();
+      userId = data.data?.[0]?.id;
+      if (!userId) return;
+    }
+  }
+
+  const res = await fetch(`https://api.twitch.tv/helix/channels/followers?broadcaster_id=${broadcasterId}&user_id=${userId}`, { headers: twitchHeaders() });
+  if (!res.ok) { console.error('Followage lookup failed:', res.status); return; }
+  const data = await res.json();
+
+  if (!data.data?.length) {
+    sendChatMessage(`@${displayName} isn't following yet... the audacity.`).catch(() => {});
+    return;
+  }
+
+  const followDate = new Date(data.data[0].followed_at);
+  const ms    = Date.now() - followDate.getTime();
+  const hours = Math.floor(ms / (1000 * 60 * 60));
+  const days  = Math.floor(ms / (1000 * 60 * 60 * 24));
+  const years = Math.floor(days / 365);
+  const remDays = days % 365;
+
+  let dur;
+  if (hours < 24)  dur = `${hours} hour${hours !== 1 ? 's' : ''}`;
+  else if (years === 0) dur = `${days} day${days !== 1 ? 's' : ''}`;
+  else dur = `${years} year${years !== 1 ? 's' : ''} and ${remDays} day${remDays !== 1 ? 's' : ''}`;
+
+  const dateStr  = followDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  const template = FOLLOWAGE_MESSAGES[followageRotateIdx % FOLLOWAGE_MESSAGES.length];
+  followageRotateIdx++;
+  sendChatMessage(template(displayName, dur, dateStr)).catch(() => {});
 }
 
 async function handleShoutout(username) {
@@ -332,6 +413,9 @@ async function handleShoutout(username) {
       profilePic:  user.profile_image_url,
       game,
     });
+    const soTemplate = SO_MESSAGES[soRotateIdx % SO_MESSAGES.length];
+    soRotateIdx++;
+    sendChatMessage(soTemplate(user.display_name, game, user.login)).catch(() => {});
     console.log('Shoutout sent for', user.login);
   } catch (err) {
     console.error('handleShoutout error:', err.message);
@@ -882,18 +966,19 @@ app.post('/custom-commands/:name/file', express.raw({ type: '*/*', limit: '100mb
 app.post('/custom-commands/:name', express.json(), (req, res) => {
   const name = req.params.name.toLowerCase().replace(/[^a-z0-9_-]/g, '');
   if (!name) return res.status(400).json({ error: 'Invalid command name' });
-  const { desc, file, fileType, permission, cooldown, oncePerStream } = req.body || {};
-  if (!desc || !file) return res.status(400).json({ error: 'desc and file required' });
+  const { desc, file, fileType, replyText, permission, cooldown, oncePerStream } = req.body || {};
+  if (!desc) return res.status(400).json({ error: 'desc required' });
   const cmds = loadCommands();
-  cmds['!' + name] = {
-    command:       '!' + name,
-    desc:          String(desc),
-    file:          String(file),
-    fileType:      fileType === 'video' ? 'video' : 'audio',
-    permission:    ['everyone','vip','mod'].includes(permission) ? permission : 'everyone',
-    cooldown:      Math.max(0, parseInt(cooldown) || 0),
-    oncePerStream: !!oncePerStream,
-  };
+  const perm = ['everyone','vip','mod'].includes(permission) ? permission : 'everyone';
+  const cd   = Math.max(0, parseInt(cooldown) || 0);
+  const once = !!oncePerStream;
+  if (fileType === 'text') {
+    if (!replyText) return res.status(400).json({ error: 'replyText required' });
+    cmds['!' + name] = { command: '!' + name, desc: String(desc), fileType: 'text', replyText: String(replyText), permission: perm, cooldown: cd, oncePerStream: once };
+  } else {
+    if (!file) return res.status(400).json({ error: 'file required' });
+    cmds['!' + name] = { command: '!' + name, desc: String(desc), file: String(file), fileType: fileType === 'video' ? 'video' : 'audio', permission: perm, cooldown: cd, oncePerStream: once };
+  }
   saveCommands(cmds);
   res.json({ ok: true });
 });
@@ -1025,7 +1110,11 @@ app.get('/command/:name', (req, res) => {
   const cmds = loadCommands();
   const cmd  = cmds[key];
   if (!cmd) return res.status(404).json({ error: 'Unknown command' });
-  broadcastMedia({ type: 'play_media', file: cmd.file, fileType: cmd.fileType });
+  if (cmd.fileType === 'text') {
+    sendChatMessage(cmd.replyText || '').catch(() => {});
+  } else {
+    broadcastMedia({ type: 'play_media', file: cmd.file, fileType: cmd.fileType });
+  }
   res.json({ ok: true, command: key });
 });
 
@@ -1263,17 +1352,26 @@ ${hasTokens ? `
         <input id="nc-name" class="t-input" placeholder="command" autocomplete="off" spellcheck="false" style="flex:1;max-width:180px">
       </div>
 
+      <label style="font-size:.72rem;color:#9d77cc;white-space:nowrap">Type</label>
+      <div style="display:flex;gap:18px;font-size:.75rem">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="nc-type" value="media" checked onchange="updateCmdType()"> Media file</label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="nc-type" value="text" onchange="updateCmdType()"> Text reply</label>
+      </div>
+
       <label style="font-size:.72rem;color:#9d77cc;white-space:nowrap">Description</label>
       <input id="nc-desc" class="t-input" placeholder="What this command does" autocomplete="off" spellcheck="false">
 
-      <label style="font-size:.72rem;color:#9d77cc;white-space:nowrap">File</label>
-      <div style="display:flex;align-items:center;gap:8px">
+      <label id="nc-file-label" style="font-size:.72rem;color:#9d77cc;white-space:nowrap">File</label>
+      <div id="nc-file-wrap" style="display:flex;align-items:center;gap:8px">
         <label style="cursor:pointer">
           <input type="file" id="nc-file" accept="audio/*,video/*" style="display:none" onchange="document.getElementById('nc-fname').textContent=this.files[0]?this.files[0].name:'No file chosen'">
           <span style="display:inline-block;font-size:.62rem;letter-spacing:1px;padding:5px 12px;border:1px solid #7b2fff;border-radius:3px;color:#7b2fff;text-transform:uppercase;cursor:pointer">Choose File</span>
         </label>
         <span id="nc-fname" style="font-size:.72rem;color:#4a2080">No file chosen</span>
       </div>
+
+      <label id="nc-reply-label" style="display:none;font-size:.72rem;color:#9d77cc;white-space:nowrap;align-self:flex-start;margin-top:4px">Reply text</label>
+      <textarea id="nc-reply" class="t-input" placeholder="Message AngryToasterAI will post in chat" rows="2" style="display:none;resize:vertical;font-family:inherit;font-size:.78rem"></textarea>
 
       <label style="font-size:.72rem;color:#9d77cc;white-space:nowrap">Permission</label>
       <select id="nc-perm" class="t-input" style="width:auto;max-width:180px">
@@ -1596,7 +1694,7 @@ async function loadCustomCmdsUI() {
     const tr = document.createElement('tr');
     tr.style.borderBottom = '1px solid #0d0015';
     tr.innerHTML = '<td style="padding:7px 10px 7px 0;color:#00f5ff;font-size:.8rem;white-space:nowrap">' + escHtml(key) + '</td>' +
-      '<td style="padding:7px 10px;color:#c9a0dc;font-size:.76rem">' + escHtml(cmd.desc) + '</td>' +
+      '<td style="padding:7px 10px;color:#c9a0dc;font-size:.76rem">' + escHtml(cmd.desc) + (cmd.fileType === 'text' ? ' <span style="color:#555;font-size:.68rem">· text reply</span>' : '') + '</td>' +
       '<td style="padding:7px 10px;color:#9d77cc;font-size:.72rem;white-space:nowrap">' + permLabel + '</td>' +
       '<td style="padding:7px 10px;color:#9d77cc;font-size:.72rem;white-space:nowrap">' + cdLabel + '</td>' +
       '<td style="padding:7px 4px;white-space:nowrap"><button onclick="triggerCmd(\\\'' + name + '\\\',\\\'nc-reset-fb\\\')" class="btn" style="padding:4px 12px;margin:0;font-size:.6rem;letter-spacing:1px">Trigger</button></td>' +
@@ -1605,47 +1703,74 @@ async function loadCustomCmdsUI() {
   }
 }
 
+function updateCmdType() {
+  const isText = document.querySelector('input[name="nc-type"]:checked').value === 'text';
+  document.getElementById('nc-file-label').style.display  = isText ? 'none' : '';
+  document.getElementById('nc-file-wrap').style.display   = isText ? 'none' : '';
+  document.getElementById('nc-reply-label').style.display = isText ? '' : 'none';
+  document.getElementById('nc-reply').style.display       = isText ? '' : 'none';
+}
+
 async function createCommand(e) {
   e.preventDefault();
   const fb   = document.getElementById('nc-fb');
   const name = document.getElementById('nc-name').value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
   const desc = document.getElementById('nc-desc').value.trim();
-  const fileInput = document.getElementById('nc-file');
-  const file = fileInput.files[0];
+  const type = document.querySelector('input[name="nc-type"]:checked').value;
   if (!name) { fb.style.color = '#ff2d78'; fb.textContent = 'Enter a command name'; return; }
   if (!desc) { fb.style.color = '#ff2d78'; fb.textContent = 'Enter a description'; return; }
-  if (!file) { fb.style.color = '#ff2d78'; fb.textContent = 'Choose a file'; return; }
-  const perm    = document.getElementById('nc-perm').value;
-  const cdVal   = document.querySelector('input[name="nc-cd"]:checked').value;
-  const cdsec   = parseInt(document.getElementById('nc-cdsec').value) || 30;
+  const perm          = document.getElementById('nc-perm').value;
+  const cdVal         = document.querySelector('input[name="nc-cd"]:checked').value;
+  const cdsec         = parseInt(document.getElementById('nc-cdsec').value) || 30;
   const cooldown      = cdVal === 'seconds' ? cdsec : 0;
   const oncePerStream = cdVal === 'stream';
 
-  fb.style.color = '#00f5ff'; fb.textContent = 'Uploading file...';
-
-  let uploadResult;
-  try {
-    const r = await fetch('/custom-commands/' + name + '/file', { method: 'POST', headers: { 'Content-Type': file.type }, body: file });
-    uploadResult = await r.json();
-    if (!uploadResult.ok) throw new Error(uploadResult.error || 'Upload failed');
-  } catch (err) { fb.style.color = '#ff2d78'; fb.textContent = '\u2717 ' + err.message; return; }
-
-  fb.textContent = 'Saving command...';
-  try {
-    const r = await fetch('/custom-commands/' + name, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ desc, file: uploadResult.file, fileType: uploadResult.fileType, permission: perm, cooldown, oncePerStream }),
-    });
-    const d = await r.json();
-    if (!d.ok) throw new Error(d.error || 'Save failed');
-    fb.style.color = '#00ff88'; fb.textContent = '\u2713 !' + name + ' created';
-    document.getElementById('nc-name').value = '';
-    document.getElementById('nc-desc').value = '';
-    fileInput.value = '';
-    document.getElementById('nc-fname').textContent = 'No file chosen';
-    loadCustomCmdsUI();
-  } catch (err) { fb.style.color = '#ff2d78'; fb.textContent = '\u2717 ' + err.message; }
+  if (type === 'text') {
+    const replyText = document.getElementById('nc-reply').value.trim();
+    if (!replyText) { fb.style.color = '#ff2d78'; fb.textContent = 'Enter a reply message'; return; }
+    fb.style.color = '#00f5ff'; fb.textContent = 'Saving command...';
+    try {
+      const r = await fetch('/custom-commands/' + name, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ desc, fileType: 'text', replyText, permission: perm, cooldown, oncePerStream }),
+      });
+      const d = await r.json();
+      if (!d.ok) throw new Error(d.error || 'Save failed');
+      fb.style.color = '#00ff88'; fb.textContent = '\u2713 !' + name + ' created';
+      document.getElementById('nc-name').value  = '';
+      document.getElementById('nc-desc').value  = '';
+      document.getElementById('nc-reply').value = '';
+      loadCustomCmdsUI();
+    } catch (err) { fb.style.color = '#ff2d78'; fb.textContent = '\u2717 ' + err.message; }
+  } else {
+    const fileInput = document.getElementById('nc-file');
+    const file = fileInput.files[0];
+    if (!file) { fb.style.color = '#ff2d78'; fb.textContent = 'Choose a file'; return; }
+    fb.style.color = '#00f5ff'; fb.textContent = 'Uploading file...';
+    let uploadResult;
+    try {
+      const r = await fetch('/custom-commands/' + name + '/file', { method: 'POST', headers: { 'Content-Type': file.type }, body: file });
+      uploadResult = await r.json();
+      if (!uploadResult.ok) throw new Error(uploadResult.error || 'Upload failed');
+    } catch (err) { fb.style.color = '#ff2d78'; fb.textContent = '\u2717 ' + err.message; return; }
+    fb.textContent = 'Saving command...';
+    try {
+      const r = await fetch('/custom-commands/' + name, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ desc, file: uploadResult.file, fileType: uploadResult.fileType, permission: perm, cooldown, oncePerStream }),
+      });
+      const d = await r.json();
+      if (!d.ok) throw new Error(d.error || 'Save failed');
+      fb.style.color = '#00ff88'; fb.textContent = '\u2713 !' + name + ' created';
+      document.getElementById('nc-name').value = '';
+      document.getElementById('nc-desc').value = '';
+      fileInput.value = '';
+      document.getElementById('nc-fname').textContent = 'No file chosen';
+      loadCustomCmdsUI();
+    } catch (err) { fb.style.color = '#ff2d78'; fb.textContent = '\u2717 ' + err.message; }
+  }
   setTimeout(() => { const f = document.getElementById('nc-fb'); if (f) f.textContent = ''; }, 3000);
 }
 
