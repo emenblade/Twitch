@@ -154,6 +154,7 @@
     .badge-lead_moderator { color: #ff2d78; font-style: italic; }
     .badge-vip            { color: #bf00ff; }
     .badge-subscriber     { color: #7b2fff; }
+    .badge-bot            { color: #888888; }
 
 
     /* ── Name ────────────────────────────────────────────────────── */
@@ -363,11 +364,20 @@ const BADGE_LABELS = {
 const BADGE_ORDER = ['broadcaster', 'lead_moderator', 'moderator', 'vip', 'subscriber'];
 
 function buildBadges(badges, username) {
+  const lname = (username || '').toLowerCase();
+
+  if (lname === 'angrytoasterai') {
+    const parts = ['<span class="badge badge-bot">BOT</span>'];
+    const custom = CUSTOM_TITLES[lname];
+    if (custom) parts.push(`<span class="badge" style="color:${custom.color || '#bf00ff'};border-color:${custom.color || '#bf00ff'}">${custom.label}</span>`);
+    return parts.join('');
+  }
+
   const parts = BADGE_ORDER
     .filter(k => badges[k] !== undefined)
     .map(k => `<span class="badge badge-${k}">${BADGE_LABELS[k] ?? k}</span>`);
 
-  const custom = CUSTOM_TITLES[(username || '').toLowerCase()];
+  const custom = CUSTOM_TITLES[lname];
   if (custom) {
     parts.push(`<span class="badge" style="color:${custom.color || '#bf00ff'};border-color:${custom.color || '#bf00ff'}">${custom.label}</span>`);
   }
