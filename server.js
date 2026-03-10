@@ -179,6 +179,10 @@ const FOLLOWAGE_MESSAGES = [
 const CLAUDE_COOLDOWN_MS = 90 * 1000;
 let lastClaudeCallTime = 0;
 
+const recentMessages  = new Map(); // username -> [{text, timestamp, displayName}]
+let toasterRoastEnabled = false;
+let toasterRoastTimer   = null;
+
 const CANNED_ROASTS = [
   '{user} I\'m a toaster. Figure it out yourself.',
   '{user} Cool question. Anyway.',
@@ -496,6 +500,54 @@ async function handleBotMention(text, tags) {
   }
 }
 
+function trackMessage(username, displayName, text) {
+  if (!recentMessages.has(username)) recentMessages.set(username, []);
+  const msgs   = recentMessages.get(username);
+  const now    = Date.now();
+  const cutoff = now - 60 * 60 * 1000;
+  msgs.push({ text, timestamp: now, displayName });
+  while (msgs.length && msgs[0].timestamp < cutoff) msgs.shift();
+  if (msgs.length > 10) msgs.splice(0, msgs.length - 10);
+}
+
+function scheduleNextRoast() {
+  if (!toasterRoastEnabled) return;
+  const delay = (10 + Math.random() * 5) * 60 * 1000; // 10–15 min
+  toasterRoastTimer = setTimeout(async () => {
+    await fireUnpromptedRoast();
+    scheduleNextRoast();
+  }, delay);
+}
+
+async function fireUnpromptedRoast() {
+  if (!Anthropic || !process.env.ANTHROPIC_API_KEY) return;
+  const cutoff     = Date.now() - 60 * 60 * 1000;
+  const candidates = [];
+  for (const [username, msgs] of recentMessages) {
+    if (username === 'angrytoasterai') continue;
+    const recent = msgs.filter(m => m.timestamp >= cutoff);
+    if (recent.length > 0) candidates.push({ username, msgs: recent });
+  }
+  if (!candidates.length) { console.log('AngryToasterAI unprompted roast: no chatters with recent messages'); return; }
+  const pick        = candidates[Math.floor(Math.random() * candidates.length)];
+  const displayName = pick.msgs[pick.msgs.length - 1].displayName || pick.username;
+  const msgList     = pick.msgs.map(m => `"${m.text}"`).join(', ');
+  try {
+    const client = new Anthropic.default({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const result = await client.messages.create({
+      model:    'claude-haiku-4-5-20251001',
+      max_tokens: 120,
+      system:   `You are AngryToasterAI, a furious sentient toaster on a Twitch stream. You randomly call out chatters unprompted based on what they've been saying. Roast them based on their messages — mock what they said, question their choices, be condescending. Keep replies under 200 characters. Savage but playful, never hateful. Always start with @username.`,
+      messages: [{ role: 'user', content: `Recent messages from @${displayName}: ${msgList}. Call them out.` }],
+    });
+    const reply = result.content[0]?.text?.trim();
+    if (reply) sendChatMessage(reply).catch(() => {});
+    console.log('AngryToasterAI unprompted roast fired at', displayName);
+  } catch (err) {
+    console.error('AngryToasterAI unprompted roast error:', err.message);
+  }
+}
+
 async function handleFollowage(tags, targetLogin = null) {
   if (!broadcasterId) return;
 
@@ -605,7 +657,14 @@ function connectChatReader() {
       if (partMatch) { chatters.delete(partMatch[1].toLowerCase()); continue; }
       // PRIVMSG
       const match = line.match(/^@(\S+) :(\w+)!\S+ PRIVMSG #\S+ :(.*)$/);
-      if (match) { chatters.add(match[2].toLowerCase()); handleChatCommand(match[3], parseChatTags(match[1], match[2])); }
+      if (match) {
+        const ircNick = match[2];
+        const msgText = match[3];
+        const msgTags = parseChatTags(match[1], ircNick);
+        chatters.add(ircNick.toLowerCase());
+        trackMessage(ircNick.toLowerCase(), msgTags.displayName || ircNick, msgText);
+        handleChatCommand(msgText, msgTags);
+      }
     }
   });
   ws.on('close', () => { chatters.clear(); setTimeout(connectChatReader, 5000); });
@@ -1280,6 +1339,24 @@ app.get('/api/chatters', (_req, res) => {
   res.json({ count: chatters.size, users: [...chatters].sort() });
 });
 
+app.post('/api/toaster-roast/toggle', (_req, res) => {
+  toasterRoastEnabled = !toasterRoastEnabled;
+  if (toasterRoastEnabled) {
+    scheduleNextRoast();
+    console.log('AngryToasterAI unprompted roasts enabled');
+  } else {
+    clearTimeout(toasterRoastTimer);
+    toasterRoastTimer = null;
+    console.log('AngryToasterAI unprompted roasts disabled');
+  }
+  res.json({ enabled: toasterRoastEnabled });
+});
+
+app.post('/api/toaster-roast/fire', async (_req, res) => {
+  await fireUnpromptedRoast();
+  res.json({ ok: true });
+});
+
 app.get('/status', (_req, res) => {
   const bot = loadBotTokens();
   res.json({
@@ -1640,6 +1717,19 @@ ${hasTokens ? `
       <p style="font-size:.78rem;margin-bottom:8px">AngryToasterAI sends chat responses for queue commands. Make sure it's <strong>modded</strong> in your channel.</p>
       <a class="btn" href="${buildBotAuthUrl()}" style="display:inline-block">${bot ? 'Re-connect Bot' : 'Connect Bot Account'}</a>`;
     })()}
+  </div>
+  <div class="card">
+    <h2>Unprompted Roasts</h2>
+    <div class="sitem" style="margin-bottom:10px">
+      <div class="sdot ${toasterRoastEnabled ? 'on' : 'off'}" id="roast-dot"></div>
+      <span id="roast-status" style="color:${toasterRoastEnabled ? '#00ff88' : '#ff2d78'}">${toasterRoastEnabled ? 'Active — fires every 10–15 min' : 'Inactive'}</span>
+    </div>
+    <p style="font-size:.78rem;margin-bottom:10px">Randomly calls out a chatter based on their recent messages.</p>
+    <div style="display:flex;gap:8px">
+      <button class="btn" id="roast-toggle" onclick="toggleRoast()">${toasterRoastEnabled ? 'Disable' : 'Enable'}</button>
+      <button class="btn" style="background:linear-gradient(135deg,#7b2fff,#ff2d78)" onclick="fireRoastNow()">Fire Now</button>
+    </div>
+    <div id="roast-fb" style="margin-top:8px;font-size:.72rem;min-height:1.1em;letter-spacing:1px"></div>
   </div>
   <div class="card">
     <h2>Spotify Now Playing</h2>
@@ -2099,6 +2189,21 @@ async function sendShoutout() {
     fb.textContent = '\\u2717 Request failed';
   }
   setTimeout(function() { const f = document.getElementById('so-fb'); if (f) f.textContent = ''; }, 3000);
+}
+async function toggleRoast() {
+  const res  = await fetch('/api/toaster-roast/toggle', { method: 'POST' });
+  const data = await res.json();
+  document.getElementById('roast-dot').className    = 'sdot ' + (data.enabled ? 'on' : 'off');
+  document.getElementById('roast-status').style.color = data.enabled ? '#00ff88' : '#ff2d78';
+  document.getElementById('roast-status').textContent  = data.enabled ? 'Active \\u2014 fires every 10\\u201315 min' : 'Inactive';
+  document.getElementById('roast-toggle').textContent  = data.enabled ? 'Disable' : 'Enable';
+}
+async function fireRoastNow() {
+  const fb = document.getElementById('roast-fb');
+  fb.style.color = '#7b2fff'; fb.textContent = 'Firing...';
+  await fetch('/api/toaster-roast/fire', { method: 'POST' });
+  fb.style.color = '#00ff88'; fb.textContent = '\\u2713 Fired!';
+  setTimeout(function() { fb.textContent = ''; }, 3000);
 }
 </script>
 
