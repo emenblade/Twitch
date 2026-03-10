@@ -146,6 +146,20 @@
     Mask="false"></Config>
 
   <!-- ═══════════════════════════════════════════════════════════════
+       ANGRY TOASTER AI (optional — for Claude-powered chat responses)
+  ════════════════════════════════════════════════════════════════ -->
+  <Config
+    Name="Anthropic API Key"
+    Target="ANTHROPIC_API_KEY"
+    Default=""
+    Mode=""
+    Description="API key from console.anthropic.com. Powers the AngryToasterAI bot — responds when @angrytoasterai is mentioned in chat."
+    Type="Variable"
+    Display="always"
+    Required="false"
+    Mask="true"></Config>
+
+  <!-- ═══════════════════════════════════════════════════════════════
        OPTIONAL
   ════════════════════════════════════════════════════════════════ -->
   <Config

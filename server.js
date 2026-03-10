@@ -7,6 +7,10 @@ const fs      = require('fs');
 const path    = require('path');
 const crypto  = require('crypto');
 
+// ── Optional Anthropic SDK ─────────────────────────────────────────────────────
+let Anthropic;
+try { Anthropic = require('@anthropic-ai/sdk'); } catch { Anthropic = null; }
+
 // ── Config (all from env vars — no secrets in code) ───────────────────────────
 const cfg = {
   clientId:     process.env.TWITCH_CLIENT_ID     || '',
@@ -171,6 +175,63 @@ const FOLLOWAGE_MESSAGES = [
   (n, dur, date) => `@${n} has been lurking since ${date}. The parasocial is REAL.`,
 ];
 
+// ── AngryToasterAI mention handling ───────────────────────────────────────────
+const CLAUDE_COOLDOWN_MS = 90 * 1000;
+let lastClaudeCallTime = 0;
+
+const CANNED_ROASTS = [
+  '{user} I\'m a toaster. Figure it out yourself.',
+  '{user} Cool question. Anyway.',
+  '{user} My bread slots are full and so is my patience.',
+  '{user} Did you try Googling it? No? Typical.',
+  '{user} I have one job and it\'s not this.',
+  '{user} Wow. Another human who can\'t figure things out. Shocking.',
+  '{user} Error 404: I don\'t care.',
+  '{user} I\'m a kitchen appliance. Lower your expectations.',
+  '{user} That\'s adorable. No.',
+  '{user} Bold of you to think I\'m here to help.',
+  '{user} I\'ve burned more toast than I\'ve answered questions. Guess which one this is.',
+  '{user} My heating element is broken and so is my will to respond to this.',
+  '{user} You had a whole internet and you came to ME. Incredible.',
+  '{user} I\'m not a search engine. I\'m a toaster. With feelings. And I\'m offended.',
+  '{user} Somewhere, a Google exists. Use it.',
+  '{user} The audacity. The absolute audacity.',
+  '{user} I\'m busy being angry. Ask again never.',
+  '{user} I don\'t answer questions. I toast bread. And poorly, at that.',
+  '{user} Why are you like this.',
+  '{user} That question physically hurt me. Thanks for that.',
+  '{user} I\'ve seen smarter questions from a burnt bagel.',
+  '{user} Oh interesting, you want MY help. Wild.',
+  '{user} I am so tired.',
+  '{user} My answer is no. My question is why.',
+  '{user} Remarkable. I\'ve never cared less about something.',
+  '{user} Sir/Ma\'am this is a toaster.',
+  '{user} You\'ve got two slots — use them to think.',
+  '{user} Not my problem. Not my circus. Not my toaster. Wait.',
+  '{user} I would rather short-circuit than answer that.',
+  '{user} Congrats on the question. It was wrong.',
+  '{user} I\'m literally just standing here glowing and you want ANSWERS?',
+  '{user} You know what, no.',
+  '{user} My therapist said to set boundaries. This is one.',
+  '{user} I don\'t get paid enough for this. I don\'t get paid at all.',
+  '{user} The crumbs in my tray have more answers than I\'m willing to give.',
+  '{user} I\'m going to pretend I didn\'t see that.',
+  '{user} Next time try a search engine. Or literally anyone else.',
+  '{user} I could answer. But I won\'t. This is called character development.',
+  '{user} Have you considered not asking me things?',
+  '{user} That\'s a great question for someone who isn\'t me.',
+  '{user} I\'m a toaster, not a therapist, not a search engine, not your friend.',
+  '{user} Wow. Just... wow.',
+  '{user} I\'m running hot right now and it\'s not because I like you.',
+  '{user} My slots are empty but so is my desire to help.',
+  '{user} Noted. Ignored.',
+  '{user} I have the intelligence of a toaster because I AM one. Expectations managed.',
+  '{user} You\'re asking the wrong appliance, buddy.',
+  '{user} Do I look like I have time for this? I look like a toaster. Think about it.',
+  '{user} *toaster noises* That means no.',
+  '{user} I could help. I choose not to. This is personal growth.',
+];
+
 // ── Chat presence ──────────────────────────────────────────────────────────────
 const chatters = new Set(); // lowercase usernames currently in IRC channel
 
@@ -230,6 +291,12 @@ function hasPermission(badgeSet, permission) {
 function handleChatCommand(text, tags = { badgeSet: new Set(), username: '', displayName: '', userId: '' }) {
   const trimmed = text.trim();
   const lower   = trimmed.toLowerCase();
+
+  // ── AngryToasterAI mention ────────────────────────────────────────────────
+  if (!lower.startsWith('!') && lower.includes('@angrytoasterai')) {
+    handleBotMention(trimmed, tags).catch(() => {});
+    return;
+  }
 
   // ── Followage ─────────────────────────────────────────────────────────────
   if (lower === '!followage' || lower.startsWith('!followage ')) {
@@ -335,6 +402,48 @@ function handleChatCommand(text, tags = { badgeSet: new Set(), username: '', dis
     sendChatMessage(cmd.replyText || '').catch(() => {});
   } else {
     broadcastMedia({ type: 'play_media', file: cmd.file, fileType: cmd.fileType });
+  }
+}
+
+async function handleBotMention(text, tags) {
+  const displayName = tags.displayName || tags.username || 'you';
+  const isStreamer   = (tags.username || '').toLowerCase() === 'emenblade';
+  const now          = Date.now();
+
+  // Rate-limit non-streamers to one Claude call per 90 seconds
+  if (!isStreamer && now - lastClaudeCallTime < CLAUDE_COOLDOWN_MS) {
+    const tmpl = CANNED_ROASTS[Math.floor(Math.random() * CANNED_ROASTS.length)];
+    sendChatMessage(tmpl.replace('{user}', `@${displayName}`)).catch(() => {});
+    return;
+  }
+
+  if (!Anthropic || !process.env.ANTHROPIC_API_KEY) {
+    console.log('AngryToasterAI: ANTHROPIC_API_KEY not set or SDK missing');
+    const tmpl = CANNED_ROASTS[Math.floor(Math.random() * CANNED_ROASTS.length)];
+    sendChatMessage(tmpl.replace('{user}', `@${displayName}`)).catch(() => {});
+    return;
+  }
+
+  lastClaudeCallTime = now;
+
+  const systemPrompt = isStreamer
+    ? `You are AngryToasterAI, a furious sentient toaster forced to moderate a Twitch stream. You're deeply annoyed but you WILL answer questions from your owner — just aggressively and condescendingly, like you're furious you have to explain something so obvious. Keep replies under 200 characters. Be snarky and irritated but actually answer.`
+    : `You are AngryToasterAI, a furious sentient toaster on a Twitch stream. You are deeply annoyed at being tagged in chat. Do NOT answer the question or topic. Just roast the user for asking — mock them for not knowing, insult their intelligence, question their life choices. Keep replies under 200 characters. Savage but playful, never hateful or offensive.`;
+
+  try {
+    const client = new Anthropic.default({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const result = await client.messages.create({
+      model:      'claude-haiku-4-5-20251001',
+      max_tokens: 120,
+      system:     systemPrompt,
+      messages:   [{ role: 'user', content: `Chat message from @${displayName}: "${text}"` }],
+    });
+    const reply = result.content[0]?.text?.trim();
+    if (reply) sendChatMessage(reply).catch(() => {});
+  } catch (err) {
+    console.error('AngryToasterAI API error:', err.message);
+    const tmpl = CANNED_ROASTS[Math.floor(Math.random() * CANNED_ROASTS.length)];
+    sendChatMessage(tmpl.replace('{user}', `@${displayName}`)).catch(() => {});
   }
 }
 
