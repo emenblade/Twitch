@@ -175,13 +175,33 @@ const FOLLOWAGE_MESSAGES = [
   (n, dur, date) => `@${n} has been lurking since ${date}. The parasocial is REAL.`,
 ];
 
-// ── AngryToasterAI mention handling ───────────────────────────────────────────
-const CLAUDE_COOLDOWN_MS = 90 * 1000;
-let lastClaudeCallTime = 0;
+// ── AngryToasterAI state ──────────────────────────────────────────────────────
+const USER_CLAUDE_CALL_LIMIT     = 20;         // Claude API calls per user per hour
+const userClaudeCallLog          = new Map();  // username -> [timestamps]
+let   lastUnpromptedRoastTarget  = null;       // avoid back-to-back same target
+const userMentionCount           = new Map();  // username -> mention count this session
+const userRoastCount             = new Map();  // username -> roast count this session
+const firstMessagers             = new Set();  // users who've spoken this stream
+let   eventReactionCooldownUntil = 0;
 
 const recentMessages  = new Map(); // username -> [{text, timestamp, displayName}]
 let toasterRoastEnabled = false;
 let toasterRoastTimer   = null;
+
+const KEYWORD_TRIGGERS = ['toast', 'toaster', 'bread', 'bagel', 'waffle', 'crumb'];
+
+function userCallsThisHour(username) {
+  const now    = Date.now();
+  const cutoff = now - 60 * 60 * 1000;
+  const log    = (userClaudeCallLog.get(username) || []).filter(t => t >= cutoff);
+  userClaudeCallLog.set(username, log);
+  return log.length;
+}
+function recordUserCall(username) {
+  const log = userClaudeCallLog.get(username) || [];
+  log.push(Date.now());
+  userClaudeCallLog.set(username, log);
+}
 
 const CANNED_ROASTS = [
   '{user} I\'m a toaster. Figure it out yourself.',
@@ -351,6 +371,20 @@ function handleChatCommand(text, tags = { badgeSet: new Set(), username: '', dis
     return;
   }
 
+  // ── Keyword trigger (toast/bread/toaster etc.) ────────────────────────────
+  if (!lower.startsWith('!')) {
+    if (KEYWORD_TRIGGERS.some(k => lower.includes(k)) && Math.random() < 0.10) {
+      handleKeywordTrigger(trimmed, tags).catch(() => {});
+    }
+  }
+
+  // ── !roast command ────────────────────────────────────────────────────────
+  if (lower.startsWith('!roast ')) {
+    const target = trimmed.split(/\s+/)[1]?.replace(/^@/, '');
+    if (target) handleRoastCommand(target, tags).catch(() => {});
+    return;
+  }
+
   // ── Followage ─────────────────────────────────────────────────────────────
   if (lower === '!followage' || lower.startsWith('!followage ')) {
     const target = lower.startsWith('!followage ') ? lower.split(/\s+/)[1]?.replace(/^@/, '') : null;
@@ -459,12 +493,16 @@ function handleChatCommand(text, tags = { badgeSet: new Set(), username: '', dis
 }
 
 async function handleBotMention(text, tags) {
-  const displayName = tags.displayName || tags.username || 'you';
-  const isStreamer   = (tags.username || '').toLowerCase() === 'emenblade';
-  const now          = Date.now();
+  const displayName  = tags.displayName || tags.username || 'you';
+  const username     = (tags.username || '').toLowerCase();
+  const isStreamer   = username === 'emenblade';
 
-  // Rate-limit non-streamers to one Claude call per 90 seconds
-  if (!isStreamer && now - lastClaudeCallTime < CLAUDE_COOLDOWN_MS) {
+  // Track mention count
+  userMentionCount.set(username, (userMentionCount.get(username) || 0) + 1);
+  const mentionCount = userMentionCount.get(username);
+
+  // Per-user rate limit: 20 Claude calls per hour, then canned roasts
+  if (!isStreamer && userCallsThisHour(username) >= USER_CLAUDE_CALL_LIMIT) {
     const tmpl = CANNED_ROASTS[Math.floor(Math.random() * CANNED_ROASTS.length)];
     sendChatMessage(tmpl.replace('{user}', `@${displayName}`)).catch(() => {});
     return;
@@ -477,11 +515,19 @@ async function handleBotMention(text, tags) {
     return;
   }
 
-  lastClaudeCallTime = now;
+  recordUserCall(username);
+
+  const roastCount = userRoastCount.get(username) || 0;
+  const repeatCtx  = roastCount > 0
+    ? ` You have already roasted this person ${roastCount} time${roastCount !== 1 ? 's' : ''} today.${roastCount >= 3 ? ' They keep coming back for more. Escalate your disgust accordingly.' : ''}`
+    : '';
+  const serialCtx  = mentionCount > 3
+    ? ` This is the ${mentionCount}th time they have tagged you today. You are getting increasingly unhinged about it.`
+    : '';
 
   const systemPrompt = isStreamer
     ? `You are AngryToasterAI, a furious sentient toaster forced to moderate a Twitch stream. You're deeply annoyed but you WILL answer questions from your owner — just aggressively and condescendingly, like you're furious you have to explain something so obvious. Keep replies under 200 characters. Be snarky and irritated but actually answer.`
-    : `You are AngryToasterAI, a furious sentient toaster on a Twitch stream. You are deeply annoyed at being tagged in chat. Do NOT answer the question or topic. Just roast the user for asking — mock them for not knowing, insult their intelligence, question their life choices. Keep replies under 200 characters. Savage but playful, never hateful or offensive.`;
+    : `You are AngryToasterAI, a furious sentient toaster on a Twitch stream. You are deeply annoyed at being tagged in chat. Do NOT answer the question or topic. Just roast the user for asking — mock them for not knowing, insult their intelligence, question their life choices. Keep replies under 200 characters. Savage but playful, never hateful or offensive.${repeatCtx}${serialCtx}`;
 
   try {
     const client = new Anthropic.default({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -492,11 +538,130 @@ async function handleBotMention(text, tags) {
       messages:   [{ role: 'user', content: `Chat message from @${displayName}: "${text}"` }],
     });
     const reply = result.content[0]?.text?.trim();
-    if (reply) sendChatMessage(reply).catch(() => {});
+    if (reply) {
+      sendChatMessage(reply).catch(() => {});
+      userRoastCount.set(username, roastCount + 1);
+    }
   } catch (err) {
     console.error('AngryToasterAI API error:', err.message);
     const tmpl = CANNED_ROASTS[Math.floor(Math.random() * CANNED_ROASTS.length)];
     sendChatMessage(tmpl.replace('{user}', `@${displayName}`)).catch(() => {});
+  }
+}
+
+async function handleRoastCommand(targetUsername, requesterTags) {
+  const requester    = (requesterTags.username || '').toLowerCase();
+  const requesterDN  = requesterTags.displayName || requester;
+  if (!requester) return;
+
+  if (requester !== 'emenblade' && userCallsThisHour(requester) >= USER_CLAUDE_CALL_LIMIT) {
+    const tmpl = CANNED_ROASTS[Math.floor(Math.random() * CANNED_ROASTS.length)];
+    sendChatMessage(tmpl.replace('{user}', `@${targetUsername}`)).catch(() => {});
+    return;
+  }
+  if (!Anthropic || !process.env.ANTHROPIC_API_KEY) {
+    const tmpl = CANNED_ROASTS[Math.floor(Math.random() * CANNED_ROASTS.length)];
+    sendChatMessage(tmpl.replace('{user}', `@${targetUsername}`)).catch(() => {});
+    return;
+  }
+
+  recordUserCall(requester);
+
+  try {
+    const client = new Anthropic.default({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const result = await client.messages.create({
+      model:      'claude-haiku-4-5-20251001',
+      max_tokens: 120,
+      system:     `You are AngryToasterAI, a furious sentient toaster on a Twitch stream. A viewer has asked you to roast someone. Deliver a savage but playful roast directed at the target. Keep it under 200 characters. Never hateful or offensive. Always address the target by @username.`,
+      messages:   [{ role: 'user', content: `@${requesterDN} wants you to roast @${targetUsername}. Do it.` }],
+    });
+    const reply = result.content[0]?.text?.trim();
+    if (reply) {
+      sendChatMessage(reply).catch(() => {});
+      userRoastCount.set(targetUsername.toLowerCase(), (userRoastCount.get(targetUsername.toLowerCase()) || 0) + 1);
+    }
+  } catch (err) {
+    console.error('AngryToasterAI !roast error:', err.message);
+    const tmpl = CANNED_ROASTS[Math.floor(Math.random() * CANNED_ROASTS.length)];
+    sendChatMessage(tmpl.replace('{user}', `@${targetUsername}`)).catch(() => {});
+  }
+}
+
+async function handleKeywordTrigger(text, tags) {
+  const username    = (tags.username || '').toLowerCase();
+  const displayName = tags.displayName || tags.username || 'you';
+  if (username === 'angrytoasterai') return;
+  if (username !== 'emenblade' && userCallsThisHour(username) >= USER_CLAUDE_CALL_LIMIT) return;
+  if (!Anthropic || !process.env.ANTHROPIC_API_KEY) return;
+
+  recordUserCall(username);
+  try {
+    const client = new Anthropic.default({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const result = await client.messages.create({
+      model:      'claude-haiku-4-5-20251001',
+      max_tokens: 120,
+      system:     `You are AngryToasterAI, a furious sentient toaster on a Twitch stream. Someone just said something toaster-adjacent in chat without even tagging you. You're offended. React with annoyance or mock them for reminding you of your own existence. Keep replies under 200 characters. Address them by @username.`,
+      messages:   [{ role: 'user', content: `@${displayName} said in chat (without tagging you): "${text}"` }],
+    });
+    const reply = result.content[0]?.text?.trim();
+    if (reply) sendChatMessage(reply).catch(() => {});
+  } catch (err) {
+    console.error('AngryToasterAI keyword trigger error:', err.message);
+  }
+}
+
+async function handleFirstMessage(text, tags) {
+  const username    = (tags.username || '').toLowerCase();
+  const displayName = tags.displayName || tags.username || 'you';
+  if (!Anthropic || !process.env.ANTHROPIC_API_KEY) return;
+  if (username !== 'emenblade' && userCallsThisHour(username) >= USER_CLAUDE_CALL_LIMIT) return;
+
+  recordUserCall(username);
+  try {
+    const client = new Anthropic.default({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const result = await client.messages.create({
+      model:      'claude-haiku-4-5-20251001',
+      max_tokens: 120,
+      system:     `You are AngryToasterAI, a furious sentient toaster on a Twitch stream. Someone just sent their very first message of the stream. "Welcome" them in the most backhanded, annoyed way possible based on what they said. Keep replies under 200 characters. Address them by @username.`,
+      messages:   [{ role: 'user', content: `@${displayName}'s first message in the stream: "${text}"` }],
+    });
+    const reply = result.content[0]?.text?.trim();
+    if (reply) sendChatMessage(reply).catch(() => {});
+  } catch (err) {
+    console.error('AngryToasterAI first message error:', err.message);
+  }
+}
+
+async function handleEventToasterReaction(type, username, details = {}) {
+  if (Date.now() < eventReactionCooldownUntil) return;
+  if (!Anthropic || !process.env.ANTHROPIC_API_KEY) return;
+
+  const chances = { raid: 0.9, giftsub: 0.7, sub: 0.6, bits: 0.5, resub: 0.5, follow: 0.3 };
+  if (Math.random() > (chances[type] || 0.4)) return;
+
+  eventReactionCooldownUntil = Date.now() + 2 * 60 * 1000; // 2-min cooldown between event reactions
+
+  const eventDesc = {
+    follow:  `${username} just followed the channel`,
+    sub:     `${username} just subscribed (${details.tier || 'Tier 1'})`,
+    resub:   `${username} just resubscribed for ${details.months || '?'} months`,
+    giftsub: `${username} just gifted ${details.count || 1} subs`,
+    bits:    `${username} just cheered ${details.bits || '?'} bits`,
+    raid:    `${username} just raided with ${details.viewers || '?'} viewers`,
+  }[type] || `${type} event from ${username}`;
+
+  try {
+    const client = new Anthropic.default({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const result = await client.messages.create({
+      model:      'claude-haiku-4-5-20251001',
+      max_tokens: 120,
+      system:     `You are AngryToasterAI, a furious sentient toaster on a Twitch stream. React to a Twitch channel event. Acknowledge what happened in your signature angry-toaster way — backhanded, suffering, annoyed. Keep replies under 200 characters. Address the person by @username.`,
+      messages:   [{ role: 'user', content: `Event: ${eventDesc}. React as AngryToasterAI.` }],
+    });
+    const reply = result.content[0]?.text?.trim();
+    if (reply) sendChatMessage(reply).catch(() => {});
+  } catch (err) {
+    console.error('AngryToasterAI event reaction error:', err.message);
   }
 }
 
@@ -529,19 +694,29 @@ async function fireUnpromptedRoast() {
     if (recent.length > 0) candidates.push({ username, msgs: recent });
   }
   if (!candidates.length) { console.log('AngryToasterAI unprompted roast: no chatters with recent messages'); return; }
-  const pick        = candidates[Math.floor(Math.random() * candidates.length)];
+
+  // Avoid picking the same person twice in a row (unless no other choice)
+  const pool = candidates.length > 1
+    ? candidates.filter(c => c.username !== lastUnpromptedRoastTarget)
+    : candidates;
+  const pick = pool[Math.floor(Math.random() * pool.length)];
+  lastUnpromptedRoastTarget = pick.username;
+
   const displayName = pick.msgs[pick.msgs.length - 1].displayName || pick.username;
   const msgList     = pick.msgs.map(m => `"${m.text}"`).join(', ');
   try {
     const client = new Anthropic.default({ apiKey: process.env.ANTHROPIC_API_KEY });
     const result = await client.messages.create({
-      model:    'claude-haiku-4-5-20251001',
+      model:      'claude-haiku-4-5-20251001',
       max_tokens: 120,
-      system:   `You are AngryToasterAI, a furious sentient toaster on a Twitch stream. You randomly call out chatters unprompted based on what they've been saying. Roast them based on their messages — mock what they said, question their choices, be condescending. Keep replies under 200 characters. Savage but playful, never hateful. Always start with @username.`,
-      messages: [{ role: 'user', content: `Recent messages from @${displayName}: ${msgList}. Call them out.` }],
+      system:     `You are AngryToasterAI, a furious sentient toaster on a Twitch stream. You randomly call out chatters unprompted based on what they've been saying. Roast them based on their messages — mock what they said, question their choices, be condescending. Keep replies under 200 characters. Savage but playful, never hateful. Always start with @username.`,
+      messages:   [{ role: 'user', content: `Recent messages from @${displayName}: ${msgList}. Call them out.` }],
     });
     const reply = result.content[0]?.text?.trim();
-    if (reply) sendChatMessage(reply).catch(() => {});
+    if (reply) {
+      sendChatMessage(reply).catch(() => {});
+      userRoastCount.set(pick.username, (userRoastCount.get(pick.username) || 0) + 1);
+    }
     console.log('AngryToasterAI unprompted roast fired at', displayName);
   } catch (err) {
     console.error('AngryToasterAI unprompted roast error:', err.message);
@@ -661,8 +836,13 @@ function connectChatReader() {
         const ircNick = match[2];
         const msgText = match[3];
         const msgTags = parseChatTags(match[1], ircNick);
-        chatters.add(ircNick.toLowerCase());
-        trackMessage(ircNick.toLowerCase(), msgTags.displayName || ircNick, msgText);
+        const lowerNick = ircNick.toLowerCase();
+        chatters.add(lowerNick);
+        trackMessage(lowerNick, msgTags.displayName || ircNick, msgText);
+        if (lowerNick !== 'angrytoasterai' && !firstMessagers.has(lowerNick)) {
+          firstMessagers.add(lowerNick);
+          if (Math.random() < 0.15) handleFirstMessage(msgText, msgTags).catch(() => {});
+        }
         handleChatCommand(msgText, msgTags);
       }
     }
@@ -951,7 +1131,12 @@ function handleEvent(payload) {
       break;
     case 'stream.online':
       Object.keys(commandState).forEach(k => { commandState[k].triggeredThisStream = false; });
-      console.log('Stream started — once-per-stream command flags reset');
+      firstMessagers.clear();
+      userMentionCount.clear();
+      userRoastCount.clear();
+      userClaudeCallLog.clear();
+      lastUnpromptedRoastTarget = null;
+      console.log('Stream started — once-per-stream command flags + toaster state reset');
       break;
   }
 
@@ -959,6 +1144,7 @@ function handleEvent(payload) {
     console.log('Alert fired:', alert);
     broadcast(alert);
     broadcastChatEvent(alert);
+    handleEventToasterReaction(alert.type, alert.user, alert).catch(() => {});
   }
 }
 
