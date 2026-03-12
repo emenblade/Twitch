@@ -187,6 +187,11 @@ let   eventReactionCooldownUntil = 0;
 const recentMessages  = new Map(); // username -> [{text, timestamp, displayName}]
 let toasterRoastEnabled = false;
 let toasterRoastTimer   = null;
+let streamOnline        = false;  // true when Twitch stream is live
+let testingMode         = false;  // bypass offline gate for local testing
+let lastChatUsername    = null;   // most recent chatter (skip for unprompted roasts)
+
+function toasterActive() { return streamOnline || testingMode; }
 
 const KEYWORD_TRIGGERS = ['toast', 'toaster', 'bread', 'bagel', 'waffle', 'crumb'];
 
@@ -501,6 +506,13 @@ async function handleBotMention(text, tags) {
   userMentionCount.set(username, (userMentionCount.get(username) || 0) + 1);
   const mentionCount = userMentionCount.get(username);
 
+  // No API calls when stream is offline and not in testing mode — fall back to canned
+  if (!isStreamer && !toasterActive()) {
+    const tmpl = CANNED_ROASTS[Math.floor(Math.random() * CANNED_ROASTS.length)];
+    sendChatMessage(tmpl.replace('{user}', `@${displayName}`)).catch(() => {});
+    return;
+  }
+
   // Per-user rate limit: 20 Claude calls per hour, then canned roasts
   if (!isStreamer && userCallsThisHour(username) >= USER_CLAUDE_CALL_LIMIT) {
     const tmpl = CANNED_ROASTS[Math.floor(Math.random() * CANNED_ROASTS.length)];
@@ -588,6 +600,7 @@ async function handleRoastCommand(targetUsername, requesterTags) {
 }
 
 async function handleKeywordTrigger(text, tags) {
+  if (!toasterActive()) return;
   const username    = (tags.username || '').toLowerCase();
   const displayName = tags.displayName || tags.username || 'you';
   if (username === 'angrytoasterai') return;
@@ -611,6 +624,7 @@ async function handleKeywordTrigger(text, tags) {
 }
 
 async function handleFirstMessage(text, tags) {
+  if (!toasterActive()) return;
   const username    = (tags.username || '').toLowerCase();
   const displayName = tags.displayName || tags.username || 'you';
   if (!Anthropic || !process.env.ANTHROPIC_API_KEY) return;
@@ -633,6 +647,7 @@ async function handleFirstMessage(text, tags) {
 }
 
 async function handleEventToasterReaction(type, username, details = {}) {
+  if (!toasterActive()) return;
   if (Date.now() < eventReactionCooldownUntil) return;
   if (!Anthropic || !process.env.ANTHROPIC_API_KEY) return;
 
@@ -695,10 +710,10 @@ async function fireUnpromptedRoast() {
   }
   if (!candidates.length) { console.log('AngryToasterAI unprompted roast: no chatters with recent messages'); return; }
 
-  // Avoid picking the same person twice in a row (unless no other choice)
-  const pool = candidates.length > 1
-    ? candidates.filter(c => c.username !== lastUnpromptedRoastTarget)
-    : candidates;
+  // Avoid the last unprompted target AND the most recent chatter; fall back gracefully
+  let pool = candidates.filter(c => c.username !== lastUnpromptedRoastTarget && c.username !== lastChatUsername);
+  if (pool.length === 0) pool = candidates.filter(c => c.username !== lastUnpromptedRoastTarget);
+  if (pool.length === 0) pool = candidates;
   const pick = pool[Math.floor(Math.random() * pool.length)];
   lastUnpromptedRoastTarget = pick.username;
 
@@ -839,6 +854,7 @@ function connectChatReader() {
         const lowerNick = ircNick.toLowerCase();
         chatters.add(lowerNick);
         trackMessage(lowerNick, msgTags.displayName || ircNick, msgText);
+        if (lowerNick !== 'angrytoasterai') lastChatUsername = lowerNick;
         if (lowerNick !== 'angrytoasterai' && !firstMessagers.has(lowerNick)) {
           firstMessagers.add(lowerNick);
           if (Math.random() < 0.15) handleFirstMessage(msgText, msgTags).catch(() => {});
@@ -1073,7 +1089,8 @@ async function setupSubscriptions() {
     await createSubscription('channel.cheer',                '1', { broadcaster_user_id: id });
     await createSubscription('channel.raid',                 '1', { to_broadcaster_user_id: id });
     await createSubscription('channel.channel_points_custom_reward_redemption.add', '1', { broadcaster_user_id: id });
-    await createSubscription('stream.online', '1', { broadcaster_user_id: id });
+    await createSubscription('stream.online',  '1', { broadcaster_user_id: id });
+    await createSubscription('stream.offline', '1', { broadcaster_user_id: id });
   } catch (err) {
     console.error('Subscription setup failed:', err.message);
   }
@@ -1136,7 +1153,17 @@ function handleEvent(payload) {
       userRoastCount.clear();
       userClaudeCallLog.clear();
       lastUnpromptedRoastTarget = null;
-      console.log('Stream started — once-per-stream command flags + toaster state reset');
+      lastChatUsername = null;
+      streamOnline = true;
+      if (!toasterRoastEnabled) { toasterRoastEnabled = true; scheduleNextRoast(); }
+      console.log('Stream started — toaster enabled, state reset');
+      break;
+    case 'stream.offline':
+      streamOnline = false;
+      toasterRoastEnabled = false;
+      clearTimeout(toasterRoastTimer);
+      toasterRoastTimer = null;
+      console.log('Stream ended — toaster disabled');
       break;
   }
 
@@ -1535,7 +1562,13 @@ app.post('/api/toaster-roast/toggle', (_req, res) => {
     toasterRoastTimer = null;
     console.log('AngryToasterAI unprompted roasts disabled');
   }
-  res.json({ enabled: toasterRoastEnabled });
+  res.json({ enabled: toasterRoastEnabled, streamOnline, testingMode });
+});
+
+app.post('/api/toaster-roast/testmode', (_req, res) => {
+  testingMode = !testingMode;
+  console.log('AngryToasterAI test mode:', testingMode ? 'ON' : 'OFF');
+  res.json({ testingMode, streamOnline, enabled: toasterRoastEnabled });
 });
 
 app.post('/api/toaster-roast/fire', async (_req, res) => {
@@ -1906,13 +1939,18 @@ ${hasTokens ? `
   </div>
   <div class="card">
     <h2>Unprompted Roasts</h2>
+    <div class="sitem" style="margin-bottom:6px">
+      <div class="sdot ${streamOnline ? 'on' : 'off'}" id="stream-status-dot"></div>
+      <span id="stream-status-label" style="color:${streamOnline ? '#00ff88' : '#888'}">Stream ${streamOnline ? 'Live' : 'Offline'}</span>
+    </div>
     <div class="sitem" style="margin-bottom:10px">
       <div class="sdot ${toasterRoastEnabled ? 'on' : 'off'}" id="roast-dot"></div>
-      <span id="roast-status" style="color:${toasterRoastEnabled ? '#00ff88' : '#ff2d78'}">${toasterRoastEnabled ? 'Active — fires every 10–15 min' : 'Inactive'}</span>
+      <span id="roast-status" style="color:${toasterRoastEnabled ? '#00ff88' : '#ff2d78'}">${toasterRoastEnabled ? (streamOnline ? 'Active — fires every 10–15 min' : 'Armed (test mode only)') : 'Inactive'}</span>
     </div>
-    <p style="font-size:.78rem;margin-bottom:10px">Randomly calls out a chatter based on their recent messages.</p>
-    <div style="display:flex;gap:8px">
+    <p style="font-size:.78rem;margin-bottom:10px">Auto-enables when stream goes live. API calls disabled when offline unless Test Mode is on.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button class="btn" id="roast-toggle" onclick="toggleRoast()">${toasterRoastEnabled ? 'Disable' : 'Enable'}</button>
+      <button class="btn" id="test-mode-btn" onclick="toggleTestMode()" style="${testingMode ? 'background:linear-gradient(135deg,#7b2fff,#ff6b00)' : ''}">${testingMode ? 'Test Mode: ON' : 'Test Mode'}</button>
       <button class="btn" style="background:linear-gradient(135deg,#7b2fff,#ff2d78)" onclick="fireRoastNow()">Fire Now</button>
     </div>
     <div id="roast-fb" style="margin-top:8px;font-size:.72rem;min-height:1.1em;letter-spacing:1px"></div>
@@ -2376,13 +2414,22 @@ async function sendShoutout() {
   }
   setTimeout(function() { const f = document.getElementById('so-fb'); if (f) f.textContent = ''; }, 3000);
 }
+function updateRoastUI(data) {
+  document.getElementById('roast-dot').className       = 'sdot ' + (data.enabled ? 'on' : 'off');
+  document.getElementById('roast-status').style.color  = data.enabled ? '#00ff88' : '#ff2d78';
+  document.getElementById('roast-status').textContent  = data.enabled ? (data.streamOnline ? 'Active \\u2014 fires every 10\\u201315 min' : 'Armed (test mode only)') : 'Inactive';
+  document.getElementById('roast-toggle').textContent  = data.enabled ? 'Disable' : 'Enable';
+  const tb = document.getElementById('test-mode-btn');
+  tb.textContent = data.testingMode ? 'Test Mode: ON' : 'Test Mode';
+  tb.style.background = data.testingMode ? 'linear-gradient(135deg,#7b2fff,#ff6b00)' : '';
+}
 async function toggleRoast() {
   const res  = await fetch('/api/toaster-roast/toggle', { method: 'POST' });
-  const data = await res.json();
-  document.getElementById('roast-dot').className    = 'sdot ' + (data.enabled ? 'on' : 'off');
-  document.getElementById('roast-status').style.color = data.enabled ? '#00ff88' : '#ff2d78';
-  document.getElementById('roast-status').textContent  = data.enabled ? 'Active \\u2014 fires every 10\\u201315 min' : 'Inactive';
-  document.getElementById('roast-toggle').textContent  = data.enabled ? 'Disable' : 'Enable';
+  updateRoastUI(await res.json());
+}
+async function toggleTestMode() {
+  const res  = await fetch('/api/toaster-roast/testmode', { method: 'POST' });
+  updateRoastUI(await res.json());
 }
 async function fireRoastNow() {
   const fb = document.getElementById('roast-fb');
