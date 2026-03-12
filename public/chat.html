@@ -188,6 +188,28 @@
       vertical-align: middle;
       margin: 0 1px;
     }
+
+    /* ── Join / leave notifications ─────────────────────────────── */
+    .join-notif {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 8px;
+      font-size: 10px;
+      color: rgba(123, 47, 255, 0.5);
+      letter-spacing: 0.5px;
+      flex-shrink: 0;
+      animation: msgIn 0.2s ease-out forwards;
+      opacity: 0;
+    }
+    .join-notif .jn-name { color: rgba(191, 0, 255, 0.65); }
+
+    /* ── First message highlight ──────────────────────────────────── */
+    .msg.first-msg {
+      border-left-color: #ffd700;
+      background: rgba(255, 215, 0, 0.06);
+    }
+    .badge-first { color: #ffd700; }
   </style>
 </head>
 <body>
@@ -385,20 +407,44 @@ function buildBadges(badges, username) {
   return parts.join('');
 }
 
+const seenUsers = new Set();
+
+function addJoinNotif(username, isJoin) {
+  const chat = document.getElementById('chat');
+  const el   = document.createElement('div');
+  el.className = 'join-notif';
+  el.innerHTML = `<span>${isJoin ? '→' : '←'}</span><span class="jn-name">${escHtml(username)}</span><span>${isJoin ? 'joined' : 'left'}</span>`;
+  chat.appendChild(el);
+  // Auto-remove after 4 seconds
+  setTimeout(() => {
+    el.style.transition = 'opacity 0.4s';
+    el.style.opacity = '0';
+    setTimeout(() => el.remove(), 400);
+  }, 4000);
+  // Respect max message limit
+  const all = chat.querySelectorAll('.msg, .join-notif');
+  if (all.length > MAX_MESSAGES + 5) all[0].remove();
+}
+
 function addMessage(tags, message) {
   const chat  = document.getElementById('chat');
   const color = tags.color || fallbackColor(tags['display-name'] || 'user');
 
+  const username  = tags['display-name'] || 'user';
+  const lname     = username.toLowerCase();
+  const isFirst   = !seenUsers.has(lname) && lname !== 'angrytoasterai';
+  seenUsers.add(lname);
+
   const el = document.createElement('div');
-  el.className = 'msg';
+  el.className = 'msg' + (isFirst ? ' first-msg' : '');
   el.style.setProperty('--user-color', color);
 
-  const username  = tags['display-name'] || 'user';
-  const badgeHtml = buildBadges(tags.badges, username);
-  const textHtml  = renderEmotes(message, tags.emotes);
+  const firstBadge = isFirst ? '<span class="badge badge-first">FIRST</span>' : '';
+  const badgeHtml  = buildBadges(tags.badges, username);
+  const textHtml   = renderEmotes(message, tags.emotes);
 
   el.innerHTML = `
-    ${badgeHtml ? `<span class="badges">${badgeHtml}</span>` : ''}
+    ${(badgeHtml || firstBadge) ? `<span class="badges">${firstBadge}${badgeHtml}</span>` : ''}
     <span class="name">${escHtml(username)}</span>
     <span class="colon">:</span>
     <span class="text">${textHtml}</span>
@@ -453,19 +499,35 @@ async function connect() {
     loadThirdPartyEmotes(status.broadcaster_id || null);
   } catch { loadThirdPartyEmotes(null); }
 
-  const dot = document.getElementById('status-dot');
-  const ws  = new WebSocket('wss://irc-ws.chat.twitch.tv');
+  const dot     = document.getElementById('status-dot');
+  const ownNick = 'justinfan' + Math.floor(Math.random() * 99999);
+  const ws      = new WebSocket('wss://irc-ws.chat.twitch.tv');
 
   ws.onopen = () => {
-    ws.send('CAP REQ :twitch.tv/tags twitch.tv/commands');
+    ws.send('CAP REQ :twitch.tv/tags twitch.tv/commands twitch.tv/membership');
     ws.send('PASS SCHMOOPIIE');
-    ws.send('NICK justinfan' + Math.floor(Math.random() * 99999));
+    ws.send('NICK ' + ownNick);
     ws.send('JOIN #' + channel);
   };
 
   ws.onmessage = (e) => {
     for (const line of e.data.split('\r\n')) {
+      if (!line) continue;
       if (line.startsWith('PING')) { ws.send('PONG :tmi.twitch.tv'); continue; }
+
+      // JOIN
+      const joinMatch = line.match(/^:(\w+)!\S+ JOIN #\S+$/);
+      if (joinMatch) {
+        if (joinMatch[1].toLowerCase() !== ownNick.toLowerCase()) addJoinNotif(joinMatch[1], true);
+        continue;
+      }
+
+      // PART
+      const partMatch = line.match(/^:(\w+)!\S+ PART #\S+$/);
+      if (partMatch) {
+        if (partMatch[1].toLowerCase() !== ownNick.toLowerCase()) addJoinNotif(partMatch[1], false);
+        continue;
+      }
 
       // @tags :user!user@... PRIVMSG #channel :message
       const match = line.match(/^@(\S+) :\S+ PRIVMSG #\S+ :(.*)$/);

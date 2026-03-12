@@ -1089,11 +1089,26 @@ async function setupSubscriptions() {
     await createSubscription('channel.cheer',                '1', { broadcaster_user_id: id });
     await createSubscription('channel.raid',                 '1', { to_broadcaster_user_id: id });
     await createSubscription('channel.channel_points_custom_reward_redemption.add', '1', { broadcaster_user_id: id });
+    await createSubscription('channel.channel_points_automatic_reward_redemption.add', '1', { broadcaster_user_id: id });
     await createSubscription('stream.online',  '1', { broadcaster_user_id: id });
     await createSubscription('stream.offline', '1', { broadcaster_user_id: id });
   } catch (err) {
     console.error('Subscription setup failed:', err.message);
   }
+}
+
+function formatAutoReward(type) {
+  const labels = {
+    send_highlighted_message:         'Highlighted Message',
+    single_message_bypass_sub_mode:   'Bypass Sub-Only Mode',
+    random_sub_emote_unlock:          'Random Sub Emote Unlock',
+    chosen_sub_emote_unlock:          'Chosen Sub Emote Unlock',
+    chosen_modified_sub_emote_unlock: 'Modified Sub Emote Unlock',
+    message_effect:                   'Message Effect',
+    gigantify_an_emote:               'Gigantify Emote',
+    celebration:                      'Celebration',
+  };
+  return labels[type] || (type ? type.replace(/_/g, ' ') : 'Channel Points Reward');
 }
 
 function handleEvent(payload) {
@@ -1143,6 +1158,15 @@ function handleEvent(payload) {
         user:   event.user_name,
         reward: event.reward.title,
         cost:   event.reward.cost,
+        input:  event.user_input || '',
+      });
+      break;
+    case 'channel.channel_points_automatic_reward_redemption.add':
+      broadcastChatEvent({
+        type:   'redemption',
+        user:   event.user_name,
+        reward: formatAutoReward(event.reward?.type),
+        cost:   event.reward?.cost,
         input:  event.user_input || '',
       });
       break;
@@ -1240,6 +1264,11 @@ app.use(express.static(path.join(__dirname, 'public'), {
     if (filePath.endsWith('.html')) res.setHeader('Cache-Control', 'no-store');
   },
 }));
+
+app.get('/commands', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.send(commandsPageHtml());
+});
 
 app.get('/setup', (req, res) => {
   const hasTokens = !!loadTokens();
@@ -1463,6 +1492,25 @@ app.delete('/queue/:username', (req, res) => {
 // ── Chat control routes ────────────────────────────────────────────────────────
 let lastClearTime = 0;
 
+app.post('/chat/send', express.json(), async (req, res) => {
+  const { message } = req.body || {};
+  if (!message) return res.status(400).json({ error: 'message required' });
+  const tokens = loadTokens();
+  if (!tokens?.access_token || !broadcasterId) return res.status(503).json({ error: 'not connected' });
+  const doSend = async (token) => fetch('https://api.twitch.tv/helix/chat/messages', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${token}`, 'Client-Id': cfg.clientId, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ broadcaster_id: broadcasterId, sender_id: broadcasterId, message }),
+  });
+  let r = await doSend(tokens.access_token);
+  if (r.status === 401) {
+    try { const t = await refreshAccessToken(); r = await doSend(t); }
+    catch (e) { return res.status(500).json({ error: 'token refresh failed' }); }
+  }
+  if (!r.ok) return res.status(r.status).json({ error: await r.text() });
+  res.json({ ok: true });
+});
+
 app.post('/chat/clear', (_req, res) => {
   lastClearTime = Date.now();
   broadcastChatEvent({ type: 'clear_chat', clearTime: lastClearTime });
@@ -1599,7 +1647,7 @@ function buildAuthUrl() {
     client_id:     cfg.clientId,
     redirect_uri:  cfg.redirectUri,
     response_type: 'code',
-    scope:         'moderator:read:followers channel:read:subscriptions bits:read channel:read:redemptions moderator:manage:banned_users',
+    scope:         'moderator:read:followers channel:read:subscriptions bits:read channel:read:redemptions moderator:manage:banned_users user:write:chat',
     force_verify:  'true',
     state:          crypto.randomBytes(16).toString('hex'),
   });
@@ -1619,6 +1667,279 @@ function buildBotAuthUrl() {
 function errorPage(msg) {
   return `<!DOCTYPE html><html><body style="background:#0d0015;color:#ff2d78;font-family:monospace;padding:40px">
     <h2>Error</h2><p>${msg}</p><a href="/setup" style="color:#00f5ff">← Back to setup</a></body></html>`;
+}
+
+function commandsPageHtml() {
+  const cmds = loadCommands();
+  return `<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="UTF-8"><title>Commands — Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0d0015;color:#e0c3ff;font-family:'Share Tech Mono',monospace;padding:20px 24px;min-height:100vh}
+  .header{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:20px}
+  .header-title h1{font-family:'Orbitron',sans-serif;color:#bf00ff;font-size:1.5rem;text-shadow:0 0 20px #bf00ff;line-height:1}
+  .header-title .sub{color:#7b2fff;letter-spacing:2px;font-size:.68rem;margin-top:4px}
+  .card{background:#1a0033;border:1px solid #3d0080;border-radius:8px;padding:18px;position:relative;margin-bottom:16px}
+  .card::before{content:'';position:absolute;top:6px;right:6px;width:9px;height:9px;border-top:1px solid #7b2fff;border-right:1px solid #7b2fff}
+  h2{font-family:'Orbitron',sans-serif;color:#00f5ff;font-size:.68rem;letter-spacing:3px;text-transform:uppercase;margin-bottom:12px}
+  p{color:#c9a0dc;line-height:1.65;margin-bottom:8px;font-size:.82rem}
+  .btn{display:inline-block;background:linear-gradient(135deg,#7b2fff,#bf00ff);color:#fff;padding:9px 22px;border-radius:6px;text-decoration:none;font-family:'Orbitron',sans-serif;font-size:.68rem;letter-spacing:2px;box-shadow:0 0 18px rgba(191,0,255,.3);cursor:pointer;border:none;margin-top:6px}
+  .btn:hover{opacity:.85}
+  a:not(.btn){color:#bf00ff}
+  table{width:100%;border-collapse:collapse;margin-top:8px}
+  td,th{vertical-align:middle;font-size:.78rem}
+  .t-input{background:#080012;border:1px solid #3d0080;border-radius:4px;padding:6px 10px;color:#e0c3ff;font-family:'Share Tech Mono',monospace;font-size:.78rem;width:100%}
+  .t-input:focus{outline:none;border-color:#7b2fff}
+</style>
+</head><body>
+
+<div class="header">
+  <div class="header-title">
+    <h1>⚡ COMMANDS</h1>
+    <div class="sub">CHAT COMMAND MANAGER</div>
+  </div>
+  <a href="/setup" class="btn" style="margin:0;padding:7px 18px;font-size:.65rem">← Dashboard</a>
+</div>
+
+<div class="card">
+  <h2>Built-In Commands</h2>
+  <p style="margin-bottom:8px">Active in <strong>#${cfg.channel}</strong>. Click Trigger to fire without typing in chat.</p>
+  <table style="margin-top:4px;width:100%">
+    <tbody>
+      ${Object.entries(CHAT_COMMANDS).map(([cmd, { desc }], i, arr) => {
+        const name = cmd.slice(1);
+        const border = i < arr.length - 1 ? 'border-bottom:1px solid #0d0015' : '';
+        return `<tr style="${border}">
+          <td style="padding:8px 14px 8px 0;color:#00f5ff;font-size:.82rem;white-space:nowrap;font-family:'Share Tech Mono',monospace">${cmd}</td>
+          <td style="padding:8px 14px;color:#c9a0dc;font-size:.78rem;width:100%">${desc}</td>
+          <td style="padding:8px 0;white-space:nowrap"><button onclick="triggerCmd('${name}')" class="btn" style="padding:5px 14px;margin:0;font-size:.62rem;letter-spacing:1px">Trigger</button></td>
+        </tr>`;
+      }).join('')}
+    </tbody>
+  </table>
+  <div id="cmd-fb" style="margin-top:8px;font-size:.72rem;min-height:1.1em;letter-spacing:1px"></div>
+</div>
+
+<div class="card">
+  <h2>Custom Commands</h2>
+  <p style="margin-bottom:12px;font-size:.78rem">Create commands that play audio/video clips or post a text reply when typed in chat.</p>
+
+  <form onsubmit="createCommand(event)" style="display:grid;grid-template-columns:auto 1fr;gap:7px 12px;align-items:center;margin-bottom:14px;max-width:600px">
+    <label style="font-size:.72rem;color:#9d77cc;white-space:nowrap">Command</label>
+    <div style="display:flex;align-items:center;gap:4px">
+      <span style="color:#00f5ff;font-size:.82rem">!</span>
+      <input id="nc-name" class="t-input" placeholder="command" autocomplete="off" spellcheck="false" style="flex:1;max-width:180px">
+    </div>
+
+    <label style="font-size:.72rem;color:#9d77cc;white-space:nowrap">Type</label>
+    <div style="display:flex;gap:18px;font-size:.75rem">
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="nc-type" value="media" checked onchange="updateCmdType()"> Media file</label>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="nc-type" value="text" onchange="updateCmdType()"> Text reply</label>
+    </div>
+
+    <label style="font-size:.72rem;color:#9d77cc;white-space:nowrap">Description</label>
+    <input id="nc-desc" class="t-input" placeholder="What this command does" autocomplete="off" spellcheck="false">
+
+    <label id="nc-file-label" style="font-size:.72rem;color:#9d77cc;white-space:nowrap">File</label>
+    <div id="nc-file-wrap" style="display:flex;align-items:center;gap:8px">
+      <label style="cursor:pointer">
+        <input type="file" id="nc-file" accept="audio/*,video/*" style="display:none" onchange="document.getElementById('nc-fname').textContent=this.files[0]?this.files[0].name:'No file chosen'">
+        <span style="display:inline-block;font-size:.62rem;letter-spacing:1px;padding:5px 12px;border:1px solid #7b2fff;border-radius:3px;color:#7b2fff;text-transform:uppercase;cursor:pointer">Choose File</span>
+      </label>
+      <span id="nc-fname" style="font-size:.72rem;color:#4a2080">No file chosen</span>
+    </div>
+
+    <label id="nc-reply-label" style="display:none;font-size:.72rem;color:#9d77cc;white-space:nowrap;align-self:flex-start;margin-top:4px">Reply text</label>
+    <textarea id="nc-reply" class="t-input" placeholder="Message AngryToasterAI will post in chat" rows="2" style="display:none;resize:vertical;font-family:inherit;font-size:.78rem"></textarea>
+
+    <label style="font-size:.72rem;color:#9d77cc;white-space:nowrap">Permission</label>
+    <select id="nc-perm" class="t-input" style="width:auto;max-width:180px">
+      <option value="everyone">Everyone</option>
+      <option value="vip">VIP+</option>
+      <option value="mod">Mod+</option>
+    </select>
+
+    <label style="font-size:.72rem;color:#9d77cc;white-space:nowrap;align-self:flex-start;margin-top:6px">Cooldown</label>
+    <div style="display:flex;flex-direction:column;gap:5px;font-size:.75rem">
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+        <input type="radio" name="nc-cd" value="none" checked> No cooldown
+      </label>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+        <input type="radio" name="nc-cd" value="seconds"> Cooldown:
+        <input type="number" id="nc-cdsec" min="1" value="30" style="width:50px;background:#080012;border:1px solid #3d0080;border-radius:3px;padding:2px 6px;color:#e0c3ff;font-family:inherit"> sec
+      </label>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+        <input type="radio" name="nc-cd" value="stream"> Once per stream
+      </label>
+    </div>
+
+    <div></div>
+    <div style="display:flex;align-items:center;gap:12px;margin-top:4px">
+      <button type="submit" class="btn" style="padding:7px 20px;margin:0;font-size:.65rem">Create Command</button>
+      <span id="nc-fb" style="font-size:.72rem;min-height:1.1em;letter-spacing:1px"></span>
+    </div>
+  </form>
+
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+    <div style="font-size:.7rem;color:#7b2fff;letter-spacing:1px">EXISTING COMMANDS</div>
+    <button onclick="resetStream()" style="background:transparent;border:1px solid #3d0080;color:#9d77cc;border-radius:3px;padding:3px 10px;cursor:pointer;font-family:inherit;font-size:.65rem;letter-spacing:1px">Reset Stream</button>
+  </div>
+  <div id="nc-table-wrap">
+    <table style="width:100%;border-collapse:collapse">
+      <thead>
+        <tr style="border-bottom:1px solid #1a0033">
+          <th style="padding:6px 10px 6px 0;text-align:left;font-size:.65rem;letter-spacing:1px;color:#7b2fff;font-weight:normal">COMMAND</th>
+          <th style="padding:6px 10px;text-align:left;font-size:.65rem;letter-spacing:1px;color:#7b2fff;font-weight:normal">DESCRIPTION</th>
+          <th style="padding:6px 10px;text-align:left;font-size:.65rem;letter-spacing:1px;color:#7b2fff;font-weight:normal">PERM</th>
+          <th style="padding:6px 10px;text-align:left;font-size:.65rem;letter-spacing:1px;color:#7b2fff;font-weight:normal">COOLDOWN</th>
+          <th style="padding:6px 0;text-align:right;font-size:.65rem;letter-spacing:1px;color:#7b2fff;font-weight:normal" colspan="2">ACTIONS</th>
+        </tr>
+      </thead>
+      <tbody id="nc-tbody"></tbody>
+    </table>
+  </div>
+  <div id="nc-reset-fb" style="margin-top:6px;font-size:.72rem;min-height:1.1em;letter-spacing:1px"></div>
+</div>
+
+<script>
+function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+async function triggerCmd(name, fbId) {
+  const id = fbId || 'cmd-fb';
+  const fb = document.getElementById(id);
+  if (fb) { fb.style.color = '#00f5ff'; fb.textContent = 'Triggering !' + name + '...'; }
+  try {
+    const r = await fetch('/command/' + name);
+    const d = await r.json();
+    if (fb) { fb.style.color = d.ok ? '#00ff88' : '#ff2d78'; fb.textContent = d.ok ? '\\u2713 !' + name + ' triggered' : '\\u2717 ' + (d.error || 'failed'); }
+  } catch { if (fb) { fb.style.color = '#ff2d78'; fb.textContent = '\\u2717 Request failed'; } }
+  setTimeout(() => { const f = document.getElementById(id); if (f) f.textContent = ''; }, 2000);
+}
+
+async function loadCustomCmdsUI() {
+  const cmds = await fetch('/custom-commands').then(r => r.json()).catch(() => ({}));
+  const tbody = document.getElementById('nc-tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  const entries = Object.entries(cmds);
+  if (!entries.length) {
+    tbody.innerHTML = '<tr><td colspan="6" style="color:#3d0080;padding:10px 0;font-size:.75rem">No custom commands yet.</td></tr>';
+    return;
+  }
+  for (const [key, cmd] of entries) {
+    const name = key.slice(1);
+    let cdLabel = 'None';
+    if (cmd.oncePerStream) cdLabel = 'Once/stream';
+    else if (cmd.cooldown > 0) cdLabel = cmd.cooldown + 's';
+    const permLabel = cmd.permission === 'everyone' ? 'Everyone' : cmd.permission === 'vip' ? 'VIP+' : 'Mod+';
+    const tr = document.createElement('tr');
+    tr.style.borderBottom = '1px solid #0d0015';
+    const nameSafe = name.replace(/'/g, "\\\\'");
+    tr.innerHTML = '<td style="padding:7px 10px 7px 0;color:#00f5ff;font-size:.8rem;white-space:nowrap">' + escHtml(key) + '</td>' +
+      '<td style="padding:7px 10px;color:#c9a0dc;font-size:.76rem">' + escHtml(cmd.desc) + (cmd.fileType === 'text' ? ' <span style="color:#555;font-size:.68rem">\\u00b7 text reply</span>' : '') + '</td>' +
+      '<td style="padding:7px 10px;color:#9d77cc;font-size:.72rem;white-space:nowrap">' + permLabel + '</td>' +
+      '<td style="padding:7px 10px;color:#9d77cc;font-size:.72rem;white-space:nowrap">' + cdLabel + '</td>' +
+      '<td style="padding:7px 4px;white-space:nowrap"><button class="btn" style="padding:4px 12px;margin:0;font-size:.6rem;letter-spacing:1px">Trigger</button></td>' +
+      '<td style="padding:7px 0;white-space:nowrap;text-align:right"><button style="background:transparent;border:1px solid #ff2d78;color:#ff2d78;border-radius:3px;padding:3px 9px;cursor:pointer;font-family:inherit;font-size:.6rem">Delete</button></td>';
+    const trigBtn = tr.querySelectorAll('button')[0];
+    const delBtn  = tr.querySelectorAll('button')[1];
+    trigBtn.onclick = () => triggerCmd(name, 'nc-reset-fb');
+    delBtn.onclick  = () => deleteCustomCmd(name);
+    tbody.appendChild(tr);
+  }
+}
+
+function updateCmdType() {
+  const isText = document.querySelector('input[name="nc-type"]:checked').value === 'text';
+  document.getElementById('nc-file-label').style.display  = isText ? 'none' : '';
+  document.getElementById('nc-file-wrap').style.display   = isText ? 'none' : '';
+  document.getElementById('nc-reply-label').style.display = isText ? '' : 'none';
+  document.getElementById('nc-reply').style.display       = isText ? '' : 'none';
+}
+
+async function createCommand(e) {
+  e.preventDefault();
+  const fb   = document.getElementById('nc-fb');
+  const name = document.getElementById('nc-name').value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+  const desc = document.getElementById('nc-desc').value.trim();
+  const type = document.querySelector('input[name="nc-type"]:checked').value;
+  if (!name) { fb.style.color = '#ff2d78'; fb.textContent = 'Enter a command name'; return; }
+  if (!desc) { fb.style.color = '#ff2d78'; fb.textContent = 'Enter a description'; return; }
+  const perm          = document.getElementById('nc-perm').value;
+  const cdVal         = document.querySelector('input[name="nc-cd"]:checked').value;
+  const cdsec         = parseInt(document.getElementById('nc-cdsec').value) || 30;
+  const cooldown      = cdVal === 'seconds' ? cdsec : 0;
+  const oncePerStream = cdVal === 'stream';
+
+  if (type === 'text') {
+    const replyText = document.getElementById('nc-reply').value.trim();
+    if (!replyText) { fb.style.color = '#ff2d78'; fb.textContent = 'Enter a reply message'; return; }
+    fb.style.color = '#00f5ff'; fb.textContent = 'Saving command...';
+    try {
+      const r = await fetch('/custom-commands/' + name, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ desc, fileType: 'text', replyText, permission: perm, cooldown, oncePerStream }),
+      });
+      const d = await r.json();
+      if (!d.ok) throw new Error(d.error || 'Save failed');
+      fb.style.color = '#00ff88'; fb.textContent = '\\u2713 !' + name + ' created';
+      document.getElementById('nc-name').value  = '';
+      document.getElementById('nc-desc').value  = '';
+      document.getElementById('nc-reply').value = '';
+      loadCustomCmdsUI();
+    } catch (err) { fb.style.color = '#ff2d78'; fb.textContent = '\\u2717 ' + err.message; }
+  } else {
+    const fileInput = document.getElementById('nc-file');
+    const file = fileInput.files[0];
+    if (!file) { fb.style.color = '#ff2d78'; fb.textContent = 'Choose a file'; return; }
+    fb.style.color = '#00f5ff'; fb.textContent = 'Uploading file...';
+    let uploadResult;
+    try {
+      const r = await fetch('/custom-commands/' + name + '/file', { method: 'POST', headers: { 'Content-Type': file.type }, body: file });
+      uploadResult = await r.json();
+      if (!uploadResult.ok) throw new Error(uploadResult.error || 'Upload failed');
+    } catch (err) { fb.style.color = '#ff2d78'; fb.textContent = '\\u2717 ' + err.message; return; }
+    fb.textContent = 'Saving command...';
+    try {
+      const r = await fetch('/custom-commands/' + name, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ desc, file: uploadResult.file, fileType: uploadResult.fileType, permission: perm, cooldown, oncePerStream }),
+      });
+      const d = await r.json();
+      if (!d.ok) throw new Error(d.error || 'Save failed');
+      fb.style.color = '#00ff88'; fb.textContent = '\\u2713 !' + name + ' created';
+      document.getElementById('nc-name').value = '';
+      document.getElementById('nc-desc').value = '';
+      fileInput.value = '';
+      document.getElementById('nc-fname').textContent = 'No file chosen';
+      loadCustomCmdsUI();
+    } catch (err) { fb.style.color = '#ff2d78'; fb.textContent = '\\u2717 ' + err.message; }
+  }
+  setTimeout(() => { const f = document.getElementById('nc-fb'); if (f) f.textContent = ''; }, 3000);
+}
+
+async function deleteCustomCmd(name) {
+  await fetch('/custom-commands/' + name, { method: 'DELETE' });
+  loadCustomCmdsUI();
+}
+
+async function resetStream() {
+  const fb = document.getElementById('nc-reset-fb');
+  if (fb) { fb.style.color = '#00f5ff'; fb.textContent = 'Resetting...'; }
+  try {
+    await fetch('/command-reset', { method: 'POST' });
+    if (fb) { fb.style.color = '#00ff88'; fb.textContent = '\\u2713 Stream flags reset'; }
+  } catch { if (fb) { fb.style.color = '#ff2d78'; fb.textContent = '\\u2717 Request failed'; } }
+  setTimeout(() => { const f = document.getElementById('nc-reset-fb'); if (f) f.textContent = ''; }, 2000);
+}
+
+loadCustomCmdsUI();
+</script>
+</body></html>`;
 }
 
 function setupPageHtml(hasTokens, authUrl) {
@@ -1699,6 +2020,11 @@ function setupPageHtml(hasTokens, authUrl) {
   .so-row{display:flex;gap:7px;margin-top:8px;align-items:center}
   .so-input{background:#080012;border:1px solid #3d0080;border-radius:4px;padding:6px 10px;color:#e0c3ff;font-family:'Share Tech Mono',monospace;font-size:.78rem;flex:1}
   .so-input:focus{outline:none;border-color:#9146ff}
+
+  /* ── Command pills ──────────────────────────────────────────────── */
+  .cmd-pill{background:#080012;border:1px solid #1a0050;border-radius:3px;padding:3px 8px;font-size:.72rem;color:#00f5ff;white-space:nowrap;font-family:'Share Tech Mono',monospace}
+  .cmd-pill.sys{color:#7b5caa;border-color:#1a0033}
+  .cmd-pill.custom{color:#bf00ff;border-color:#3d0080}
 </style>
 </head><body>
 
@@ -1741,6 +2067,11 @@ ${hasTokens ? `
           <button class="btn" style="margin:0;padding:5px 14px;font-size:.62rem;background:linear-gradient(135deg,#3a0000,#6b0000)" onclick="fetch('/chat/clear',{method:'POST'})">Clear Chat</button>
         </div>
         <iframe id="chat-preview" src="/chat.html" class="chat-frame" frameborder="0"></iframe>
+        <div style="display:flex;gap:7px;margin-top:8px">
+          <input id="chat-send-input" class="so-input" placeholder="Send as emenblade..." autocomplete="off" spellcheck="false" style="flex:1" onkeydown="if(event.key==='Enter')sendDashboardChat()">
+          <button class="btn" style="margin:0;padding:7px 16px;font-size:.65rem" onclick="sendDashboardChat()">Send</button>
+        </div>
+        <div id="chat-send-fb" style="margin-top:4px;font-size:.68rem;min-height:1em;letter-spacing:1px"></div>
       </div>
       <div class="card" style="flex:2;display:flex;flex-direction:column;min-width:0">
         <h2>In Chat <span id="chatter-count" style="color:#7b2fff;font-size:.6rem;letter-spacing:1px"></span></h2>
@@ -1776,105 +2107,16 @@ ${hasTokens ? `
 </div>
 
 <div class="card" style="margin-top:16px">
-  <h2>Chat Commands</h2>
-
-  <div style="font-size:.62rem;letter-spacing:2px;color:#7b2fff;margin-bottom:6px;text-transform:uppercase">Built-In</div>
-  <p style="margin-bottom:8px">Active in <strong>#${cfg.channel}</strong>. Click Trigger to fire without typing in chat.</p>
-  <table style="margin-top:4px;width:100%">
-    <tbody>
-      ${Object.entries(CHAT_COMMANDS).map(([cmd, { desc }], i, arr) => {
-        const name = cmd.slice(1);
-        const border = i < arr.length - 1 ? 'border-bottom:1px solid #0d0015' : '';
-        return `<tr style="${border}">
-          <td style="padding:8px 14px 8px 0;color:#00f5ff;font-size:.82rem;white-space:nowrap;font-family:\'Share Tech Mono\',monospace">${cmd}</td>
-          <td style="padding:8px 14px;color:#c9a0dc;font-size:.78rem;width:100%">${desc}</td>
-          <td style="padding:8px 0;white-space:nowrap"><button onclick="triggerCmd('${name}')" class="btn" style="padding:5px 14px;margin:0;font-size:.62rem;letter-spacing:1px">Trigger</button></td>
-        </tr>`;
-      }).join('')}
-    </tbody>
-  </table>
-  <div id="cmd-fb" style="margin-top:8px;font-size:.72rem;min-height:1.1em;letter-spacing:1px"></div>
-
-  <div style="margin-top:22px;border-top:1px solid #1a0033;padding-top:16px">
-    <div style="font-size:.62rem;letter-spacing:2px;color:#7b2fff;margin-bottom:10px;text-transform:uppercase">Custom Commands</div>
-    <p style="margin-bottom:12px;font-size:.78rem">Create commands that play audio or video clips when typed in chat.</p>
-
-    <form onsubmit="createCommand(event)" style="display:grid;grid-template-columns:auto 1fr;gap:7px 12px;align-items:center;margin-bottom:14px;max-width:600px">
-      <label style="font-size:.72rem;color:#9d77cc;white-space:nowrap">Command</label>
-      <div style="display:flex;align-items:center;gap:4px">
-        <span style="color:#00f5ff;font-size:.82rem">!</span>
-        <input id="nc-name" class="t-input" placeholder="command" autocomplete="off" spellcheck="false" style="flex:1;max-width:180px">
-      </div>
-
-      <label style="font-size:.72rem;color:#9d77cc;white-space:nowrap">Type</label>
-      <div style="display:flex;gap:18px;font-size:.75rem">
-        <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="nc-type" value="media" checked onchange="updateCmdType()"> Media file</label>
-        <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="nc-type" value="text" onchange="updateCmdType()"> Text reply</label>
-      </div>
-
-      <label style="font-size:.72rem;color:#9d77cc;white-space:nowrap">Description</label>
-      <input id="nc-desc" class="t-input" placeholder="What this command does" autocomplete="off" spellcheck="false">
-
-      <label id="nc-file-label" style="font-size:.72rem;color:#9d77cc;white-space:nowrap">File</label>
-      <div id="nc-file-wrap" style="display:flex;align-items:center;gap:8px">
-        <label style="cursor:pointer">
-          <input type="file" id="nc-file" accept="audio/*,video/*" style="display:none" onchange="document.getElementById('nc-fname').textContent=this.files[0]?this.files[0].name:'No file chosen'">
-          <span style="display:inline-block;font-size:.62rem;letter-spacing:1px;padding:5px 12px;border:1px solid #7b2fff;border-radius:3px;color:#7b2fff;text-transform:uppercase;cursor:pointer">Choose File</span>
-        </label>
-        <span id="nc-fname" style="font-size:.72rem;color:#4a2080">No file chosen</span>
-      </div>
-
-      <label id="nc-reply-label" style="display:none;font-size:.72rem;color:#9d77cc;white-space:nowrap;align-self:flex-start;margin-top:4px">Reply text</label>
-      <textarea id="nc-reply" class="t-input" placeholder="Message AngryToasterAI will post in chat" rows="2" style="display:none;resize:vertical;font-family:inherit;font-size:.78rem"></textarea>
-
-      <label style="font-size:.72rem;color:#9d77cc;white-space:nowrap">Permission</label>
-      <select id="nc-perm" class="t-input" style="width:auto;max-width:180px">
-        <option value="everyone">Everyone</option>
-        <option value="vip">VIP+</option>
-        <option value="mod">Mod+</option>
-      </select>
-
-      <label style="font-size:.72rem;color:#9d77cc;white-space:nowrap;align-self:flex-start;margin-top:6px">Cooldown</label>
-      <div style="display:flex;flex-direction:column;gap:5px;font-size:.75rem">
-        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-          <input type="radio" name="nc-cd" value="none" checked> No cooldown
-        </label>
-        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-          <input type="radio" name="nc-cd" value="seconds"> Cooldown:
-          <input type="number" id="nc-cdsec" min="1" value="30" style="width:50px;background:#080012;border:1px solid #3d0080;border-radius:3px;padding:2px 6px;color:#e0c3ff;font-family:inherit"> sec
-        </label>
-        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-          <input type="radio" name="nc-cd" value="stream"> Once per stream
-        </label>
-      </div>
-
-      <div></div>
-      <div style="display:flex;align-items:center;gap:12px;margin-top:4px">
-        <button type="submit" class="btn" style="padding:7px 20px;margin:0;font-size:.65rem">Create Command</button>
-        <span id="nc-fb" style="font-size:.72rem;min-height:1.1em;letter-spacing:1px"></span>
-      </div>
-    </form>
-
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-      <div style="font-size:.7rem;color:#7b2fff;letter-spacing:1px">EXISTING COMMANDS</div>
-      <button onclick="resetStream()" style="background:transparent;border:1px solid #3d0080;color:#9d77cc;border-radius:3px;padding:3px 10px;cursor:pointer;font-family:inherit;font-size:.65rem;letter-spacing:1px">Reset Stream</button>
-    </div>
-    <div id="nc-table-wrap">
-      <table style="width:100%;border-collapse:collapse">
-        <thead>
-          <tr style="border-bottom:1px solid #1a0033">
-            <th style="padding:6px 10px 6px 0;text-align:left;font-size:.65rem;letter-spacing:1px;color:#7b2fff;font-weight:normal">COMMAND</th>
-            <th style="padding:6px 10px;text-align:left;font-size:.65rem;letter-spacing:1px;color:#7b2fff;font-weight:normal">DESCRIPTION</th>
-            <th style="padding:6px 10px;text-align:left;font-size:.65rem;letter-spacing:1px;color:#7b2fff;font-weight:normal">PERM</th>
-            <th style="padding:6px 10px;text-align:left;font-size:.65rem;letter-spacing:1px;color:#7b2fff;font-weight:normal">COOLDOWN</th>
-            <th style="padding:6px 0;text-align:right;font-size:.65rem;letter-spacing:1px;color:#7b2fff;font-weight:normal" colspan="2">ACTIONS</th>
-          </tr>
-        </thead>
-        <tbody id="nc-tbody"></tbody>
-      </table>
-    </div>
-    <div id="nc-reset-fb" style="margin-top:6px;font-size:.72rem;min-height:1.1em;letter-spacing:1px"></div>
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+    <h2 style="margin:0">Commands</h2>
+    <a href="/commands" style="font-size:.63rem;color:#7b2fff;letter-spacing:1px;text-decoration:none;border:1px solid #3d0080;border-radius:3px;padding:3px 10px">MANAGE →</a>
   </div>
+  <div id="cmd-pills" style="display:flex;flex-wrap:wrap;gap:5px">
+    ${[...Object.keys(CHAT_COMMANDS), '!so', '!shoutout', '!addme', '!leave', '!next', '!clearqueue', '!followage', '!roast', '!timeout', '!ban', '!unban'].map(cmd =>
+      `<span class="cmd-pill sys">${cmd}</span>`
+    ).join('')}
+  </div>
+  <div id="cmd-count" style="margin-top:8px;font-size:.63rem;color:#3d3d5c;letter-spacing:1px"></div>
 </div>
 
 <div class="card" style="margin-top:16px">
@@ -2134,135 +2376,31 @@ async function removeSound(type) {
   loadSoundsUI();
 }
 
-async function triggerCmd(name, fbId) {
-  const id = fbId || 'cmd-fb';
-  const fb = document.getElementById(id);
-  if (fb) { fb.style.color = '#00f5ff'; fb.textContent = 'Triggering !' + name + '...'; }
-  try {
-    const r = await fetch('/command/' + name);
-    const d = await r.json();
-    if (fb) { fb.style.color = d.ok ? '#00ff88' : '#ff2d78'; fb.textContent = d.ok ? '\u2713 !' + name + ' triggered' : '\u2717 ' + (d.error || 'failed'); }
-  } catch { if (fb) { fb.style.color = '#ff2d78'; fb.textContent = '\u2717 Request failed'; } }
-  setTimeout(() => { const f = document.getElementById(id); if (f) f.textContent = ''; }, 2000);
-}
-
-// ── Custom commands ─────────────────────────────────────────────────
-async function loadCustomCmdsUI() {
-  const cmds = await fetch('/custom-commands').then(r => r.json()).catch(() => ({}));
-  const tbody = document.getElementById('nc-tbody');
-  if (!tbody) return;
-  tbody.innerHTML = '';
-  const entries = Object.entries(cmds);
-  if (!entries.length) {
-    tbody.innerHTML = '<tr><td colspan="6" style="color:#3d0080;padding:10px 0;font-size:.75rem">No custom commands yet.</td></tr>';
-    return;
-  }
-  for (const [key, cmd] of entries) {
-    const name = key.slice(1);
-    let cdLabel = 'None';
-    if (cmd.oncePerStream) cdLabel = 'Once/stream';
-    else if (cmd.cooldown > 0) cdLabel = cmd.cooldown + 's';
-    const permLabel = cmd.permission === 'everyone' ? 'Everyone' : cmd.permission === 'vip' ? 'VIP+' : 'Mod+';
-    const tr = document.createElement('tr');
-    tr.style.borderBottom = '1px solid #0d0015';
-    tr.innerHTML = '<td style="padding:7px 10px 7px 0;color:#00f5ff;font-size:.8rem;white-space:nowrap">' + escHtml(key) + '</td>' +
-      '<td style="padding:7px 10px;color:#c9a0dc;font-size:.76rem">' + escHtml(cmd.desc) + (cmd.fileType === 'text' ? ' <span style="color:#555;font-size:.68rem">· text reply</span>' : '') + '</td>' +
-      '<td style="padding:7px 10px;color:#9d77cc;font-size:.72rem;white-space:nowrap">' + permLabel + '</td>' +
-      '<td style="padding:7px 10px;color:#9d77cc;font-size:.72rem;white-space:nowrap">' + cdLabel + '</td>' +
-      '<td style="padding:7px 4px;white-space:nowrap"><button onclick="triggerCmd(\\\'' + name + '\\\',\\\'nc-reset-fb\\\')" class="btn" style="padding:4px 12px;margin:0;font-size:.6rem;letter-spacing:1px">Trigger</button></td>' +
-      '<td style="padding:7px 0;white-space:nowrap;text-align:right"><button onclick="deleteCustomCmd(\\\'' + name + '\\')" style="background:transparent;border:1px solid #ff2d78;color:#ff2d78;border-radius:3px;padding:3px 9px;cursor:pointer;font-family:inherit;font-size:.6rem">Delete</button></td>';
-    tbody.appendChild(tr);
-  }
-}
-
-function updateCmdType() {
-  const isText = document.querySelector('input[name="nc-type"]:checked').value === 'text';
-  document.getElementById('nc-file-label').style.display  = isText ? 'none' : '';
-  document.getElementById('nc-file-wrap').style.display   = isText ? 'none' : '';
-  document.getElementById('nc-reply-label').style.display = isText ? '' : 'none';
-  document.getElementById('nc-reply').style.display       = isText ? '' : 'none';
-}
-
-async function createCommand(e) {
-  e.preventDefault();
-  const fb   = document.getElementById('nc-fb');
-  const name = document.getElementById('nc-name').value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
-  const desc = document.getElementById('nc-desc').value.trim();
-  const type = document.querySelector('input[name="nc-type"]:checked').value;
-  if (!name) { fb.style.color = '#ff2d78'; fb.textContent = 'Enter a command name'; return; }
-  if (!desc) { fb.style.color = '#ff2d78'; fb.textContent = 'Enter a description'; return; }
-  const perm          = document.getElementById('nc-perm').value;
-  const cdVal         = document.querySelector('input[name="nc-cd"]:checked').value;
-  const cdsec         = parseInt(document.getElementById('nc-cdsec').value) || 30;
-  const cooldown      = cdVal === 'seconds' ? cdsec : 0;
-  const oncePerStream = cdVal === 'stream';
-
-  if (type === 'text') {
-    const replyText = document.getElementById('nc-reply').value.trim();
-    if (!replyText) { fb.style.color = '#ff2d78'; fb.textContent = 'Enter a reply message'; return; }
-    fb.style.color = '#00f5ff'; fb.textContent = 'Saving command...';
-    try {
-      const r = await fetch('/custom-commands/' + name, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ desc, fileType: 'text', replyText, permission: perm, cooldown, oncePerStream }),
-      });
-      const d = await r.json();
-      if (!d.ok) throw new Error(d.error || 'Save failed');
-      fb.style.color = '#00ff88'; fb.textContent = '\u2713 !' + name + ' created';
-      document.getElementById('nc-name').value  = '';
-      document.getElementById('nc-desc').value  = '';
-      document.getElementById('nc-reply').value = '';
-      loadCustomCmdsUI();
-    } catch (err) { fb.style.color = '#ff2d78'; fb.textContent = '\u2717 ' + err.message; }
-  } else {
-    const fileInput = document.getElementById('nc-file');
-    const file = fileInput.files[0];
-    if (!file) { fb.style.color = '#ff2d78'; fb.textContent = 'Choose a file'; return; }
-    fb.style.color = '#00f5ff'; fb.textContent = 'Uploading file...';
-    let uploadResult;
-    try {
-      const r = await fetch('/custom-commands/' + name + '/file', { method: 'POST', headers: { 'Content-Type': file.type }, body: file });
-      uploadResult = await r.json();
-      if (!uploadResult.ok) throw new Error(uploadResult.error || 'Upload failed');
-    } catch (err) { fb.style.color = '#ff2d78'; fb.textContent = '\u2717 ' + err.message; return; }
-    fb.textContent = 'Saving command...';
-    try {
-      const r = await fetch('/custom-commands/' + name, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ desc, file: uploadResult.file, fileType: uploadResult.fileType, permission: perm, cooldown, oncePerStream }),
-      });
-      const d = await r.json();
-      if (!d.ok) throw new Error(d.error || 'Save failed');
-      fb.style.color = '#00ff88'; fb.textContent = '\u2713 !' + name + ' created';
-      document.getElementById('nc-name').value = '';
-      document.getElementById('nc-desc').value = '';
-      fileInput.value = '';
-      document.getElementById('nc-fname').textContent = 'No file chosen';
-      loadCustomCmdsUI();
-    } catch (err) { fb.style.color = '#ff2d78'; fb.textContent = '\u2717 ' + err.message; }
-  }
-  setTimeout(() => { const f = document.getElementById('nc-fb'); if (f) f.textContent = ''; }, 3000);
-}
-
-async function deleteCustomCmd(name) {
-  await fetch('/custom-commands/' + name, { method: 'DELETE' });
-  loadCustomCmdsUI();
-}
-
-async function resetStream() {
-  const fb = document.getElementById('nc-reset-fb');
-  if (fb) { fb.style.color = '#00f5ff'; fb.textContent = 'Resetting...'; }
-  try {
-    await fetch('/command-reset', { method: 'POST' });
-    if (fb) { fb.style.color = '#00ff88'; fb.textContent = '\u2713 Stream flags reset'; }
-  } catch { if (fb) { fb.style.color = '#ff2d78'; fb.textContent = '\u2717 Request failed'; } }
-  setTimeout(() => { const f = document.getElementById('nc-reset-fb'); if (f) f.textContent = ''; }, 2000);
-}
-
 if (document.getElementById('sstat-follow')) loadSoundsUI();
-if (document.getElementById('nc-tbody')) loadCustomCmdsUI();
+
+// ── Commands pill list ───────────────────────────────────────────────
+async function loadCmdPills() {
+  const custom = await fetch('/custom-commands').then(r => r.json()).catch(() => ({}));
+  const container = document.getElementById('cmd-pills');
+  if (!container) return;
+  container.querySelectorAll('.cmd-pill.custom').forEach(el => el.remove());
+  for (const [key, cmd] of Object.entries(custom)) {
+    const pill = document.createElement('span');
+    pill.className = 'cmd-pill custom';
+    let label = key;
+    if (cmd.permission === 'mod') label += ' (mod)';
+    else if (cmd.permission === 'vip') label += ' (vip)';
+    pill.textContent = label;
+    container.appendChild(pill);
+  }
+  const total = container.querySelectorAll('.cmd-pill').length;
+  const el = document.getElementById('cmd-count');
+  if (el) el.textContent = total + ' command' + (total !== 1 ? 's' : '') + ' active';
+}
+if (document.getElementById('cmd-pills')) {
+  loadCmdPills();
+  setInterval(loadCmdPills, 30000);
+}
 
 // ── Queue UI ────────────────────────────────────────────────────────
 function renderQueue(q) {
@@ -2386,6 +2524,30 @@ async function refreshChatters() {
 }
 refreshChatters();
 setInterval(refreshChatters, 15000);
+
+// ── Dashboard Chat Send ──────────────────────────────────────────────
+async function sendDashboardChat() {
+  const input = document.getElementById('chat-send-input');
+  const fb    = document.getElementById('chat-send-fb');
+  const msg   = (input.value || '').trim();
+  if (!msg) return;
+  try {
+    const r = await fetch('/chat/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: msg }),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      input.value = '';
+      if (fb) { fb.style.color = '#00ff88'; fb.textContent = '\\u2713 sent'; setTimeout(() => { if (fb) fb.textContent = ''; }, 1500); }
+    } else {
+      if (fb) { fb.style.color = '#ff2d78'; fb.textContent = '\\u2717 ' + (d.error || 'failed'); setTimeout(() => { if (fb) fb.textContent = ''; }, 3000); }
+    }
+  } catch {
+    if (fb) { fb.style.color = '#ff2d78'; fb.textContent = '\\u2717 request failed'; setTimeout(() => { if (fb) fb.textContent = ''; }, 3000); }
+  }
+}
 
 // ── Shoutout UI ─────────────────────────────────────────────────────
 async function sendShoutout() {
