@@ -1154,6 +1154,50 @@ async function setupSubscriptions() {
   } catch (err) {
     console.error('Subscription setup failed:', err.message);
   }
+  // Connect PubSub after broadcasterId is known
+  connectPubSub();
+}
+
+let pubSubWs = null;
+let pubSubPingTimer = null;
+
+function connectPubSub() {
+  if (!broadcasterId) return;
+  const token = loadTokens()?.access_token;
+  if (!token) return;
+
+  if (pubSubWs) { pubSubWs.removeAllListeners(); pubSubWs.terminate(); }
+  clearInterval(pubSubPingTimer);
+
+  console.log('Connecting to Twitch PubSub...');
+  pubSubWs = new WebSocket('wss://pubsub-edge.twitch.tv/v1');
+
+  pubSubWs.on('open', () => {
+    console.log('PubSub connected');
+    const topics = [
+      `channel-bits-events-v2.${broadcasterId}`,
+      `channel-bits-badge-unlock.${broadcasterId}`,
+    ];
+    pubSubWs.send(JSON.stringify({ type: 'LISTEN', data: { topics, auth_token: token } }));
+    pubSubPingTimer = setInterval(() => {
+      if (pubSubWs?.readyState === 1) pubSubWs.send(JSON.stringify({ type: 'PING' }));
+    }, 4 * 60 * 1000);
+  });
+
+  pubSubWs.on('message', (raw) => {
+    const msg = JSON.parse(raw.toString());
+    if (msg.type === 'PONG') return;
+    if (msg.type === 'RECONNECT') { connectPubSub(); return; }
+    console.log('PubSub message:', JSON.stringify(msg));
+  });
+
+  pubSubWs.on('close', (code) => {
+    console.log(`PubSub closed (${code}), reconnecting in 10s...`);
+    clearInterval(pubSubPingTimer);
+    setTimeout(connectPubSub, 10000);
+  });
+
+  pubSubWs.on('error', (err) => console.error('PubSub error:', err.message));
 }
 
 function formatAutoReward(type) {
