@@ -2308,9 +2308,13 @@ ${hasTokens ? `
   </div>
   <div style="flex:1;display:flex;flex-direction:column;gap:16px">
     <div style="display:flex;gap:16px;align-items:stretch">
-      <div class="card" style="padding:14px;flex:3">
+      <div class="card" style="padding:14px;flex:3;display:flex;flex-direction:column">
         <h2 style="margin-bottom:10px">Twitch Chat</h2>
-        <iframe id="twitch-chat-embed" style="width:100%;height:400px;border:none;border-radius:4px" allowfullscreen></iframe>
+        <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;background:#080012;border-radius:4px;border:1px solid rgba(123,47,255,0.3);padding:24px">
+          <div style="font-family:'Share Tech Mono',monospace;font-size:.75rem;color:#888;text-align:center;letter-spacing:1px">Open Twitch chat in a popup window<br>to see sticker and extension messages</div>
+          <a href="https://www.twitch.tv/popout/${cfg.channel}/chat?popout=" target="twitch-chat-popup" onclick="window.open(this.href,'twitch-chat-popup','width=340,height=600,resizable=yes');return false;" style="display:inline-block;padding:12px 28px;background:linear-gradient(135deg,#5a10cc,#9146ff);color:#fff;font-family:'Share Tech Mono',monospace;font-size:.8rem;letter-spacing:2px;border-radius:4px;text-decoration:none;text-transform:uppercase">Open Chat Popout</a>
+          <div id="new-chatter-zone" style="min-height:1.6em;font-size:.72rem;font-family:'Share Tech Mono',monospace;letter-spacing:1px;color:#ffd700;display:flex;flex-direction:column;gap:3px;text-align:center"></div>
+        </div>
       </div>
       <div class="card" style="flex:2;display:flex;flex-direction:column;min-width:0">
         <h2>In Chat <span id="chatter-count" style="color:#7b2fff;font-size:.6rem;letter-spacing:1px"></span></h2>
@@ -2842,12 +2846,6 @@ async function refreshChatters() {
 }
 refreshChatters();
 setInterval(refreshChatters, 15000);
-
-// ── Twitch Chat Embed ────────────────────────────────────────────────
-(function() {
-  var iframe = document.getElementById('twitch-chat-embed');
-  if (iframe) iframe.src = 'https://www.twitch.tv/embed/${cfg.channel}/chat?parent=' + window.location.hostname;
-})();
 
 // ── Viewer Count ─────────────────────────────────────────────────────
 async function refreshViewerCount() {
