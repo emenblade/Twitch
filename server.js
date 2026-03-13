@@ -885,6 +885,17 @@ function connectChatReader() {
         const lowerNick = ircNick.toLowerCase();
         chatters.add(lowerNick);
         trackMessage(lowerNick, msgTags.displayName || ircNick, msgText);
+        // Extract color from raw IRC tags
+        const colorM = match[1].match(/(?:^|;)color=(#[0-9a-fA-F]{6})/);
+        const msgColor = colorM ? colorM[1] : '';
+        broadcastChatEvent({
+          type:        'chat_message',
+          displayName: msgTags.displayName || ircNick,
+          username:    lowerNick,
+          color:       msgColor,
+          badges:      [...msgTags.badgeSet],
+          message:     msgText,
+        });
         if (lowerNick !== 'angrytoasterai') lastChatUsername = lowerNick;
         if (lowerNick !== 'angrytoasterai' && !firstMessagers.has(lowerNick)) {
           firstMessagers.add(lowerNick);
@@ -1124,6 +1135,22 @@ async function setupSubscriptions() {
     await createSubscription('channel.channel_points_automatic_reward_redemption.add', '1', { broadcaster_user_id: id });
     await createSubscription('stream.online',  '1', { broadcaster_user_id: id });
     await createSubscription('stream.offline', '1', { broadcaster_user_id: id });
+    await createSubscription('channel.update',              '2', { broadcaster_user_id: id });
+    await createSubscription('channel.ban',                 '1', { broadcaster_user_id: id, moderator_user_id: id });
+    await createSubscription('channel.unban',               '1', { broadcaster_user_id: id, moderator_user_id: id });
+    await createSubscription('channel.moderator.add',       '1', { broadcaster_user_id: id });
+    await createSubscription('channel.moderator.remove',    '1', { broadcaster_user_id: id });
+    await createSubscription('channel.poll.begin',          '1', { broadcaster_user_id: id });
+    await createSubscription('channel.poll.end',            '1', { broadcaster_user_id: id });
+    await createSubscription('channel.prediction.begin',    '1', { broadcaster_user_id: id });
+    await createSubscription('channel.prediction.end',      '1', { broadcaster_user_id: id });
+    await createSubscription('channel.hype_train.begin',    '1', { broadcaster_user_id: id });
+    await createSubscription('channel.hype_train.end',      '1', { broadcaster_user_id: id });
+    await createSubscription('channel.goal.begin',          '1', { broadcaster_user_id: id });
+    await createSubscription('channel.goal.end',            '1', { broadcaster_user_id: id });
+    await createSubscription('channel.shoutout.receive',    '1', { broadcaster_user_id: id, moderator_user_id: id });
+    await createSubscription('channel.ad_break.begin',      '1', { broadcaster_user_id: id });
+    await createSubscription('channel.charity_campaign.donate', '1', { broadcaster_user_id: id });
   } catch (err) {
     console.error('Subscription setup failed:', err.message);
   }
@@ -1201,6 +1228,136 @@ function handleEvent(payload) {
         reward: formatAutoReward(event.reward?.type),
         cost:   event.reward?.cost,
         input:  event.user_input || '',
+      });
+      break;
+    case 'channel.update':
+      broadcastChatEvent({
+        type: 'stream_update',
+        user: event.broadcaster_user_name,
+        title: event.title || '',
+        category: event.category_name || '',
+      });
+      break;
+    case 'channel.ban':
+      broadcastChatEvent({
+        type: 'ban',
+        user: event.user_name,
+        mod: event.moderator_user_name,
+        duration: event.is_permanent ? 'permanent' : (event.banned_at ? `${Math.round((new Date(event.ends_at || event.banned_at).getTime() - Date.now()) / 1000)}s` : ''),
+        reason: event.reason || '',
+      });
+      break;
+    case 'channel.unban':
+      broadcastChatEvent({
+        type: 'unban',
+        user: event.user_name,
+        mod: event.moderator_user_name,
+      });
+      break;
+    case 'channel.moderator.add':
+      broadcastChatEvent({ type: 'mod_add', user: event.user_name });
+      break;
+    case 'channel.moderator.remove':
+      broadcastChatEvent({ type: 'mod_remove', user: event.user_name });
+      break;
+    case 'channel.poll.begin':
+      broadcastChatEvent({
+        type: 'poll_begin',
+        user: event.broadcaster_user_name,
+        title: event.title,
+        choices: (event.choices || []).map(c => c.title).join(', '),
+      });
+      break;
+    case 'channel.poll.end':
+      {
+        const winner = (event.choices || []).sort((a, b) => (b.votes || 0) - (a.votes || 0))[0];
+        broadcastChatEvent({
+          type: 'poll_end',
+          user: event.broadcaster_user_name,
+          title: event.title,
+          winner: winner ? `${winner.title} (${winner.votes || 0} votes)` : '',
+        });
+      }
+      break;
+    case 'channel.prediction.begin':
+      broadcastChatEvent({
+        type: 'prediction_begin',
+        user: event.broadcaster_user_name,
+        title: event.title,
+        choices: (event.outcomes || []).map(o => o.title).join(' vs '),
+      });
+      break;
+    case 'channel.prediction.end':
+      {
+        const winning = event.winning_outcome_id
+          ? (event.outcomes || []).find(o => o.id === event.winning_outcome_id)
+          : null;
+        broadcastChatEvent({
+          type: 'prediction_end',
+          user: event.broadcaster_user_name,
+          title: event.title,
+          status: event.status,
+          winner: winning ? winning.title : '',
+        });
+      }
+      break;
+    case 'channel.hype_train.begin':
+      broadcastChatEvent({
+        type: 'hype_train',
+        user: event.broadcaster_user_name || 'channel',
+        level: event.level || 1,
+        total: event.total || 0,
+      });
+      break;
+    case 'channel.hype_train.end':
+      broadcastChatEvent({
+        type: 'hype_train_end',
+        user: event.broadcaster_user_name || 'channel',
+        level: event.level || 1,
+        total: event.total || 0,
+      });
+      break;
+    case 'channel.goal.begin':
+      broadcastChatEvent({
+        type: 'goal_begin',
+        user: event.broadcaster_user_name,
+        description: event.description || event.type || '',
+        target: event.target_amount,
+        current: event.current_amount,
+      });
+      break;
+    case 'channel.goal.end':
+      broadcastChatEvent({
+        type: 'goal_end',
+        user: event.broadcaster_user_name,
+        description: event.description || event.type || '',
+        target: event.target_amount,
+        current: event.current_amount,
+        achieved: event.is_achieved,
+      });
+      break;
+    case 'channel.shoutout.receive':
+      broadcastChatEvent({
+        type: 'shoutout_in',
+        user: event.from_broadcaster_user_name,
+        viewers: event.viewer_count || 0,
+      });
+      break;
+    case 'channel.ad_break.begin':
+      broadcastChatEvent({
+        type: 'ad_break',
+        user: event.broadcaster_user_name || 'channel',
+        duration: event.duration_seconds || 0,
+        automatic: event.is_automatic,
+      });
+      break;
+    case 'channel.charity_campaign.donate':
+      broadcastChatEvent({
+        type: 'charity',
+        user: event.user_name,
+        amount: event.amount?.value ? (event.amount.value / Math.pow(10, event.amount.decimal_places || 2)).toFixed(2) : '?',
+        currency: event.amount?.currency || 'USD',
+        charity: event.charity_name || '',
       });
       break;
     case 'stream.online':
@@ -1680,7 +1837,7 @@ function buildAuthUrl() {
     client_id:     cfg.clientId,
     redirect_uri:  cfg.redirectUri,
     response_type: 'code',
-    scope:         'moderator:read:followers channel:read:subscriptions bits:read channel:read:redemptions moderator:manage:banned_users user:write:chat',
+    scope:         'moderator:read:followers channel:read:subscriptions bits:read channel:read:redemptions moderator:manage:banned_users user:write:chat channel:read:polls channel:read:predictions channel:read:hype_train channel:read:goals moderator:read:shoutouts channel:read:ads channel:read:charity moderation:read channel:moderate',
     force_verify:  'true',
     state:          crypto.randomBytes(16).toString('hex'),
   });
@@ -2010,9 +2167,6 @@ function setupPageHtml(hasTokens, authUrl) {
   .bottom-row{display:flex;gap:16px;align-items:flex-start}
   .col-left{flex:0 0 300px;display:flex;flex-direction:column;gap:16px;min-width:0}
 
-  /* ── Chat iframe ─────────────────────────────────────────────────── */
-  .chat-frame{width:100%;height:560px;border:1px solid #3d0080;border-radius:4px;background:#080012;display:block}
-
   /* ── Event feed ──────────────────────────────────────────────────── */
   #event-feed{height:340px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;background:#080012;border-radius:4px;padding:8px;scrollbar-width:thin;scrollbar-color:#3d0080 transparent}
   #event-feed::-webkit-scrollbar{width:4px}
@@ -2099,7 +2253,7 @@ ${hasTokens ? `
           <h2 style="margin:0">Chat Preview</h2>
           <button class="btn" style="margin:0;padding:5px 14px;font-size:.62rem;background:linear-gradient(135deg,#3a0000,#6b0000)" onclick="fetch('/chat/clear',{method:'POST'})">Clear Chat</button>
         </div>
-        <iframe id="chat-preview" src="/chat.html" class="chat-frame" frameborder="0"></iframe>
+        <div id="chat-log" style="height:340px;overflow-y:auto;background:rgba(8,0,18,0.95);border-radius:4px;border:1px solid rgba(123,47,255,0.3);padding:8px;display:flex;flex-direction:column;gap:3px;font-family:'Share Tech Mono',monospace;font-size:11px;scrollbar-width:thin;scrollbar-color:#3d0080 transparent"></div>
         <div id="new-chatter-zone" style="min-height:1.6em;margin-top:6px;font-size:.72rem;font-family:'Share Tech Mono',monospace;letter-spacing:1px;color:#ffd700;display:flex;flex-direction:column;gap:3px"></div>
         <div style="display:flex;gap:7px;margin-top:4px">
           <input id="chat-send-input" class="so-input" placeholder="Send as emenblade..." autocomplete="off" spellcheck="false" style="flex:1" onkeydown="if(event.key==='Enter')sendDashboardChat()">
@@ -2329,19 +2483,42 @@ function ts() {
 
 const FEED_COLORS = {
   follow:'#00f5ff', sub:'#bf00ff', resub:'#9d00ff',
-  giftsub:'#ff2d78', bits:'#ffd700', raid:'#ff6b35', redemption:'#ffd700',
+  giftsub:'#ff2d78', bits:'#ffd700', raid:'#ff6b35',
+  redemption:'#ffd700', stream_update:'#7b2fff',
+  ban:'#ff2d2d', unban:'#00ff88', mod_add:'#00ff88', mod_remove:'#ff6b35',
+  poll_begin:'#7b2fff', poll_end:'#bf00ff',
+  prediction_begin:'#d44aff', prediction_end:'#bf00ff',
+  hype_train:'#ff6b35', hype_train_end:'#ffd700',
+  goal_begin:'#00f5ff', goal_end:'#00ff88',
+  shoutout_in:'#ff2d78', ad_break:'#888888', charity:'#00ff88',
 };
 
 function feedDetail(m) {
   switch (m.type) {
-    case 'follow':     return 'followed';
-    case 'sub':        return 'subscribed' + (m.tier ? ' \xb7 ' + escHtml(m.tier) : '');
-    case 'resub':      return 'resubbed \xb7 ' + m.months + ' months' + (m.tier ? ' \xb7 ' + escHtml(m.tier) : '') + (m.message ? ' \u2014 <span class="ev-input">&ldquo;' + escHtml(m.message) + '&rdquo;</span>' : '');
-    case 'giftsub':    return 'gifted ' + m.count + ' sub' + (m.count !== 1 ? 's' : '') + (m.tier ? ' \xb7 ' + escHtml(m.tier) : '');
-    case 'bits':       return 'cheered ' + Number(m.bits).toLocaleString() + ' bits' + (m.message ? ' \u2014 <span class="ev-input">&ldquo;' + escHtml(m.message) + '&rdquo;</span>' : '');
-    case 'raid':       return 'raided with ' + Number(m.viewers).toLocaleString() + ' viewers';
-    case 'redemption': return 'redeemed ' + escHtml(m.reward) + (m.cost ? ' <span style="color:#4a2080">(' + Number(m.cost).toLocaleString() + ' pts)</span>' : '') + (m.input ? ' \u2014 <span class="ev-input">&ldquo;' + escHtml(m.input) + '&rdquo;</span>' : '');
-    default:           return escHtml(m.type);
+    case 'follow':          return 'followed';
+    case 'sub':             return 'subscribed' + (m.tier ? ' \xb7 ' + escHtml(m.tier) : '');
+    case 'resub':           return 'resubbed \xb7 ' + m.months + ' months' + (m.tier ? ' \xb7 ' + escHtml(m.tier) : '') + (m.message ? ' \u2014 <span class="ev-input">&ldquo;' + escHtml(m.message) + '&rdquo;</span>' : '');
+    case 'giftsub':         return 'gifted ' + m.count + ' sub' + (m.count !== 1 ? 's' : '') + (m.tier ? ' \xb7 ' + escHtml(m.tier) : '');
+    case 'bits':            return 'cheered ' + Number(m.bits).toLocaleString() + ' bits' + (m.message ? ' \u2014 <span class="ev-input">&ldquo;' + escHtml(m.message) + '&rdquo;</span>' : '');
+    case 'raid':            return 'raided with ' + Number(m.viewers).toLocaleString() + ' viewers';
+    case 'redemption':      return 'redeemed ' + escHtml(m.reward) + (m.cost ? ' <span style="color:#4a2080">(' + Number(m.cost).toLocaleString() + ' pts)</span>' : '') + (m.input ? ' \u2014 <span class="ev-input">&ldquo;' + escHtml(m.input) + '&rdquo;</span>' : '');
+    case 'stream_update':   return 'updated stream' + (m.category ? ' \xb7 ' + escHtml(m.category) : '') + (m.title ? ' \u2014 <span class="ev-input">&ldquo;' + escHtml(m.title) + '&rdquo;</span>' : '');
+    case 'ban':             return 'banned' + (m.mod ? ' by ' + escHtml(m.mod) : '') + (m.duration ? ' \xb7 ' + escHtml(m.duration) : ' \xb7 permanent') + (m.reason ? ' \u2014 ' + escHtml(m.reason) : '');
+    case 'unban':           return 'unbanned' + (m.mod ? ' by ' + escHtml(m.mod) : '');
+    case 'mod_add':         return 'made mod';
+    case 'mod_remove':      return 'unmodded';
+    case 'poll_begin':      return 'poll started \u2014 <span class="ev-input">' + escHtml(m.title) + '</span>' + (m.choices ? ' [' + escHtml(m.choices) + ']' : '');
+    case 'poll_end':        return 'poll ended \u2014 winner: <span class="ev-input">' + escHtml(m.winner || 'n/a') + '</span>';
+    case 'prediction_begin':return 'prediction started \u2014 <span class="ev-input">' + escHtml(m.title) + '</span>' + (m.choices ? ' [' + escHtml(m.choices) + ']' : '');
+    case 'prediction_end':  return 'prediction ' + escHtml(m.status || 'ended') + (m.winner ? ' \u2014 winner: <span class="ev-input">' + escHtml(m.winner) + '</span>' : '');
+    case 'hype_train':      return 'hype train started! level ' + m.level + ' \xb7 ' + Number(m.total).toLocaleString() + ' pts';
+    case 'hype_train_end':  return 'hype train ended \xb7 level ' + m.level + ' \xb7 ' + Number(m.total).toLocaleString() + ' pts';
+    case 'goal_begin':      return 'goal started \u2014 ' + escHtml(m.description) + ' \xb7 target: ' + Number(m.target).toLocaleString();
+    case 'goal_end':        return 'goal ' + (m.achieved ? '\u2705 achieved' : 'ended') + ' \u2014 ' + escHtml(m.description) + ' \xb7 ' + Number(m.current).toLocaleString() + ' / ' + Number(m.target).toLocaleString();
+    case 'shoutout_in':     return 'shouted out the channel \xb7 ' + Number(m.viewers).toLocaleString() + ' viewers';
+    case 'ad_break':        return (m.automatic ? 'auto ' : 'manual ') + 'ad break \xb7 ' + m.duration + 's';
+    case 'charity':         return 'donated $' + escHtml(m.amount) + ' ' + escHtml(m.currency) + (m.charity ? ' to ' + escHtml(m.charity) : '');
+    default:                return escHtml(m.type);
   }
 }
 
@@ -2355,11 +2532,43 @@ function addFeedEvent(data) {
   row.className = 'ev-row';
   row.style.setProperty('--ec', color);
   row.innerHTML = \`<span class="ev-time">\${ts()}</span><span class="ev-user" style="color:\${color}">\${escHtml(data.user)}</span><span class="ev-detail">\${feedDetail(data)}</span>\`;
+  const atBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 60;
   feed.appendChild(row);
-  feed.scrollTop = feed.scrollHeight;
+  if (atBottom) feed.scrollTop = feed.scrollHeight;
 }
 
-const FEED_TYPES = new Set(['follow','sub','resub','giftsub','bits','raid','redemption']);
+const MAX_CHAT_LOG = 150;
+const FALLBACKS_DASH = ['#00f5ff','#bf00ff','#ff2d78','#9d00ff','#00c8ff','#d44aff','#7b2fff'];
+function dashFallbackColor(name) {
+  var h = 0; for (var c of name) h = (h * 31 + c.charCodeAt(0)) & 0xffffffff;
+  return FALLBACKS_DASH[Math.abs(h) % FALLBACKS_DASH.length];
+}
+function addChatLogMessage(m) {
+  const log = document.getElementById('chat-log');
+  if (!log) return;
+  const color = m.color || dashFallbackColor(m.username || 'user');
+  const badges = (m.badges || []);
+  const badgeHtml = badges.filter(function(b) { return ['broadcaster','moderator','vip','subscriber'].indexOf(b) !== -1; })
+    .map(function(b) {
+      const labels = {broadcaster:'LIVE',moderator:'MOD',vip:'VIP',subscriber:'SUB'};
+      const colors = {broadcaster:'#ff2d78',moderator:'#00ff88',vip:'#bf00ff',subscriber:'#7b2fff'};
+      return '<span style="font-size:9px;padding:1px 4px;border-radius:2px;border:1px solid ' + colors[b] + ';color:' + colors[b] + ';margin-right:3px">' + labels[b] + '</span>';
+    }).join('');
+  const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 60;
+  const el = document.createElement('div');
+  el.style.cssText = 'padding:2px 6px;border-left:2px solid ' + color + ';background:rgba(13,0,26,0.4);border-radius:0 3px 3px 0;flex-shrink:0';
+  el.innerHTML = badgeHtml + '<span style="font-weight:bold;color:' + color + '">' + escHtml(m.displayName) + '</span><span style="color:rgba(255,255,255,0.3)">: </span><span style="color:#ddd0f0;word-break:break-word">' + escHtml(m.message) + '</span>';
+  log.appendChild(el);
+  const msgs = log.children;
+  if (msgs.length > MAX_CHAT_LOG) msgs[0].remove();
+  if (atBottom) log.scrollTop = log.scrollHeight;
+}
+
+const FEED_TYPES = new Set(['follow','sub','resub','giftsub','bits','raid','redemption',
+  'stream_update','ban','unban','mod_add','mod_remove',
+  'poll_begin','poll_end','prediction_begin','prediction_end',
+  'hype_train','hype_train_end','goal_begin','goal_end',
+  'shoutout_in','ad_break','charity']);
 
 function showNewChatterAlert(displayName) {
   const zone = document.getElementById('new-chatter-zone');
@@ -2384,6 +2593,7 @@ function showNewChatterAlert(displayName) {
     try {
       const m = JSON.parse(e.data);
       if (FEED_TYPES.has(m.type)) addFeedEvent(m);
+      if (m.type === 'chat_message') addChatLogMessage(m);
       if (m.type === 'queue_update') renderQueue(m.queue);
       if (m.type === 'new_chatter') showNewChatterAlert(m.displayName || m.username);
     } catch {}
