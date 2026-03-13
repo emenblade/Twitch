@@ -877,6 +877,9 @@ function connectChatReader() {
       const partMatch = line.match(/^:(\w+)!\S+ PART #\S+$/);
       if (partMatch) { chatters.delete(partMatch[1].toLowerCase()); continue; }
       // PRIVMSG
+      if (line.includes('PRIVMSG') && !line.match(/^@(\S+) :(\w+)!\S+ PRIVMSG #\S+ :(.*)$/)) {
+        console.log('IRC unmatched PRIVMSG:', line);
+      }
       const match = line.match(/^@(\S+) :(\w+)!\S+ PRIVMSG #\S+ :(.*)$/);
       if (match) {
         const ircNick = match[2];
