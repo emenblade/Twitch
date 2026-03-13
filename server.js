@@ -193,6 +193,9 @@ let lastChatUsername      = null;   // most recent chatter (skip for unprompted 
 let lastBotResponseTime   = 0;     // timestamp of last bot message (for soft-trigger cooldown)
 const SOFT_TRIGGER_COOLDOWN = 45 * 1000; // 45s cooldown for keyword/first-msg triggers
 
+let currentStreamTitle = '';
+let currentStreamGame  = '';
+
 function toasterActive() { return streamOnline || testingMode; }
 
 const KEYWORD_TRIGGERS = ['toast', 'toaster', 'bread', 'bagel', 'waffle', 'crumb'];
@@ -876,9 +879,9 @@ function connectChatReader() {
       // PART
       const partMatch = line.match(/^:(\w+)!\S+ PART #\S+$/);
       if (partMatch) { chatters.delete(partMatch[1].toLowerCase()); continue; }
-      // PRIVMSG
-      if (line.includes('PRIVMSG') && !line.match(/^@(\S+) :(\w+)!\S+ PRIVMSG #\S+ :(.*)$/)) {
-        console.log('IRC unmatched PRIVMSG:', line);
+      // Debug: log any line containing PRIVMSG, USERNOTICE, NOTICE, HOSTTARGET, WHISPER that we don't handle
+      if (/PRIVMSG|USERNOTICE|NOTICE|WHISPER/.test(line) && !line.match(/^@(\S+) :(\w+)!\S+ PRIVMSG #\S+ :(.*)$/)) {
+        console.log('IRC unhandled:', line);
       }
       const match = line.match(/^@(\S+) :(\w+)!\S+ PRIVMSG #\S+ :(.*)$/);
       if (match) {
@@ -1127,6 +1130,16 @@ async function setupSubscriptions() {
     if (!broadcasterId) throw new Error(`Channel not found: ${cfg.channel}`);
     console.log(`Setting up subscriptions for ${cfg.channel} (${broadcasterId})...`);
 
+    // Fetch current stream title + game
+    try {
+      const chanRes = await fetch(`https://api.twitch.tv/helix/channels?broadcaster_id=${broadcasterId}`, { headers: twitchHeaders() });
+      const chanData = await chanRes.json();
+      if (chanData.data?.[0]) {
+        currentStreamTitle = chanData.data[0].title || '';
+        currentStreamGame  = chanData.data[0].game_name || '';
+      }
+    } catch {}
+
     const id = broadcasterId;
     await createSubscription('channel.follow',               '2', { broadcaster_user_id: id, moderator_user_id: id });
     await createSubscription('channel.subscribe',            '1', { broadcaster_user_id: id });
@@ -1278,6 +1291,8 @@ function handleEvent(payload) {
       });
       break;
     case 'channel.update':
+      currentStreamTitle = event.title || '';
+      currentStreamGame  = event.category_name || '';
       broadcastChatEvent({
         type: 'stream_update',
         user: event.broadcaster_user_name,
@@ -1837,6 +1852,10 @@ app.get('/api/chatters', (_req, res) => {
   res.json({ count: chatters.size, users: [...chatters].sort() });
 });
 
+app.get('/api/channel', (_req, res) => {
+  res.json({ title: currentStreamTitle, game: currentStreamGame });
+});
+
 app.get('/api/stream', async (_req, res) => {
   if (!broadcasterId) return res.json({ live: false, viewers: 0 });
   try {
@@ -1939,6 +1958,7 @@ function commandsPageHtml() {
   td,th{vertical-align:middle;font-size:.78rem}
   .t-input{background:#080012;border:1px solid #3d0080;border-radius:4px;padding:6px 10px;color:#e0c3ff;font-family:'Share Tech Mono',monospace;font-size:.78rem;width:100%}
   .t-input:focus{outline:none;border-color:#7b2fff}
+  .url{background:#080012;border:1px solid #3d0080;border-radius:4px;padding:6px 10px;font-size:.72rem;color:#00f5ff;word-break:break-all;letter-spacing:.5px;margin-bottom:4px}
 </style>
 </head><body>
 
@@ -1967,6 +1987,36 @@ function commandsPageHtml() {
     </tbody>
   </table>
   <div id="cmd-fb" style="margin-top:8px;font-size:.72rem;min-height:1.1em;letter-spacing:1px"></div>
+</div>
+
+<div class="card">
+  <h2>OBS Browser Sources</h2>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+    <div>
+      <p style="font-size:.75rem;color:#888;margin-bottom:3px">Alerts overlay — <strong>1920 × 300</strong>, transparent, bottom of scene</p>
+      <div class="url">${cfg.hostUrl}/alerts.html</div>
+    </div>
+    <div>
+      <p style="font-size:.75rem;color:#888;margin-bottom:3px">Chat overlay — <strong>380 × 700</strong>, transparent, right side</p>
+      <div class="url">${cfg.hostUrl}/chat.html</div>
+    </div>
+    <div>
+      <p style="font-size:.75rem;color:#888;margin-bottom:3px">Media player (custom commands) — <strong>1920 × 1080</strong>, transparent, top layer</p>
+      <div class="url">${cfg.hostUrl}/media.html</div>
+    </div>
+    <div>
+      <p style="font-size:.75rem;color:#888;margin-bottom:3px">Shoutout overlay — <strong>600 × 160</strong>, transparent</p>
+      <div class="url">${cfg.hostUrl}/shoutout.html</div>
+    </div>
+    <div>
+      <p style="font-size:.75rem;color:#888;margin-bottom:3px">Queue overlay — <strong>300 × 600</strong>, transparent</p>
+      <div class="url">${cfg.hostUrl}/queue.html</div>
+    </div>
+    <div>
+      <p style="font-size:.75rem;color:#888;margin-bottom:3px">Spotify Now Playing — <strong>500 × 140</strong>, transparent</p>
+      <div class="url">${cfg.hostUrl}/spotify.html</div>
+    </div>
+  </div>
 </div>
 
 <div class="card">
@@ -2048,6 +2098,26 @@ function commandsPageHtml() {
     </table>
   </div>
   <div id="nc-reset-fb" style="margin-top:6px;font-size:.72rem;min-height:1.1em;letter-spacing:1px"></div>
+</div>
+
+<div class="card">
+  <h2>Custom Alert Sounds</h2>
+  <p>Upload audio files (MP3, WAV, OGG, WEBM, FLAC — max 20 MB each) to replace the built-in synth sounds.</p>
+  <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-top:10px">
+    ${['follow','sub','resub','giftsub','bits','raid'].map(t => {
+      const clr = {follow:'#00f5ff',sub:'#bf00ff',resub:'#9d00ff',giftsub:'#ff2d78',bits:'#ffd700',raid:'#ff6b35'}[t];
+      return `<div style="background:#080012;border:1px solid #3d0080;border-radius:4px;padding:10px;text-align:center">
+        <div style="color:${clr};font-size:.68rem;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px">${t}</div>
+        <div id="sstat-${t}" style="font-size:.65rem;color:#4a2080;margin-bottom:6px;min-height:1em">—</div>
+        <label style="cursor:pointer;display:block">
+          <input type="file" accept="audio/*" style="display:none" onchange="uploadSound('${t}',this)">
+          <span style="display:block;font-size:.62rem;letter-spacing:1px;padding:4px 0;border:1px solid ${clr};border-radius:3px;color:${clr};text-transform:uppercase;cursor:pointer">Upload</span>
+        </label>
+        <button onclick="removeSound('${t}')" id="sdel-${t}" style="display:none;width:100%;margin-top:4px;background:transparent;border:1px solid #ff2d78;color:#ff2d78;border-radius:3px;padding:3px;cursor:pointer;font-family:inherit;font-size:.62rem">Remove</button>
+      </div>`;
+    }).join('')}
+  </div>
+  <div id="sound-fb" style="margin-top:10px;font-size:.72rem;min-height:1.1em;letter-spacing:1px"></div>
 </div>
 
 <script>
@@ -2185,6 +2255,42 @@ async function resetStream() {
 }
 
 loadCustomCmdsUI();
+
+// ── Custom sounds ──────────────────────────────────────────────────
+async function loadSoundsUI() {
+  const sounds = await fetch('/sounds').then(r => r.json()).catch(() => ({}));
+  for (const [type, ext] of Object.entries(sounds)) {
+    const stat = document.getElementById('sstat-' + type);
+    const del  = document.getElementById('sdel-' + type);
+    if (!stat) continue;
+    stat.textContent  = ext ? type + '.' + ext : '—';
+    stat.style.color  = ext ? '#00ff88' : '#4a2080';
+    if (del) del.style.display = ext ? 'block' : 'none';
+  }
+}
+
+async function uploadSound(type, input) {
+  const file = input.files[0];
+  if (!file) return;
+  const fb = document.getElementById('sound-fb');
+  fb.style.color = '#00f5ff';
+  fb.textContent = 'Uploading ' + type + '...';
+  try {
+    const r = await fetch('/sounds/' + type, { method: 'POST', headers: { 'Content-Type': file.type }, body: file });
+    const d = await r.json();
+    if (d.ok) { fb.style.color = '#00ff88'; fb.textContent = '\\u2713 ' + type + ' sound uploaded'; loadSoundsUI(); }
+    else       { fb.style.color = '#ff2d78'; fb.textContent = '\\u2717 ' + (d.error || 'Upload failed'); }
+  } catch { fb.style.color = '#ff2d78'; fb.textContent = '\\u2717 Request failed'; }
+  setTimeout(() => { const f = document.getElementById('sound-fb'); if (f) f.textContent = ''; }, 3000);
+  input.value = '';
+}
+
+async function removeSound(type) {
+  await fetch('/sounds/' + type, { method: 'DELETE' });
+  loadSoundsUI();
+}
+
+if (document.getElementById('sstat-follow')) loadSoundsUI();
 </script>
 </body></html>`;
 }
@@ -2276,25 +2382,63 @@ function setupPageHtml(hasTokens, authUrl) {
   <div class="header-title">
     <h1>⚡ DASHBOARD</h1>
     <div class="sub">STREAM CONTROL // EMENBLADE</div>
+    <div id="stream-info" style="margin-top:5px;font-size:.72rem;font-family:'Share Tech Mono',monospace;color:#c9a0dc;letter-spacing:1px;min-height:1.2em">
+      <span id="stream-title-hdr" style="color:#e0c3ff"></span><span id="stream-sep" style="color:#3d3d5c;display:none"> · </span><span id="stream-game-hdr" style="color:#9146ff"></span>
+    </div>
   </div>
-  <div class="header-status">
-    <div class="sitem"><div class="sdot ${hasTokens ? 'on' : 'off'}"></div>${hasTokens ? 'Twitch connected' : 'Not connected'}</div>
-    <div class="sitem"><div class="sdot ${cfg.clientId ? 'on' : 'off'}"></div>Client ID</div>
-    <div class="sitem"><div class="sdot ${cfg.channel ? 'on' : 'off'}"></div>${cfg.channel || 'no channel'}</div>
+  <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px">
+    <div class="header-status">
+      <div class="sitem"><div class="sdot ${hasTokens ? 'on' : 'off'}"></div>${hasTokens ? 'Twitch connected' : 'Not connected'}</div>
+      <div class="sitem"><div class="sdot ${cfg.clientId ? 'on' : 'off'}"></div>Client ID</div>
+      <div class="sitem"><div class="sdot ${cfg.channel ? 'on' : 'off'}"></div>${cfg.channel || 'no channel'}</div>
+      <div class="sitem"><div class="sdot ${loadBotTokens() ? 'on' : 'off'}"></div>${loadBotTokens() ? 'Bot: ' + (loadBotTokens().bot_login || 'connected') : 'Bot: not connected'}</div>
+      <div class="sitem"><div class="sdot ${loadSpotifyTokens() ? 'on' : 'off'}"></div>${loadSpotifyTokens() ? 'Spotify' : 'Spotify: off'}</div>
+    </div>
+    <a href="/commands" target="_blank" style="font-size:.63rem;color:#7b2fff;letter-spacing:1px;text-decoration:none;border:1px solid #3d0080;border-radius:3px;padding:4px 12px;align-self:flex-end">COMMANDS ↗</a>
   </div>
 </div>
 
 ${hasTokens ? `
-<div class="main-row">
-  <div class="col-left">
-    <div class="card" style="padding:14px">
+<div style="display:flex;flex-direction:column;gap:16px">
+
+  <!-- Row 1: Event Feed | Chat | In Chat -->
+  <div style="display:flex;gap:16px;align-items:stretch">
+    <div class="card" style="padding:14px;flex:1;display:flex;flex-direction:column">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
         <h2 style="margin:0">Event Feed</h2>
         <button class="btn" style="margin:0;padding:5px 14px;font-size:.62rem;background:linear-gradient(135deg,#3a0000,#6b0000)" onclick="fetch('/chat/clear',{method:'POST'})">Clear Chat</button>
       </div>
-      <div id="event-feed"><div class="ev-empty">Waiting for events...</div></div>
+      <div id="event-feed" style="flex:1"><div class="ev-empty">Waiting for events...</div></div>
     </div>
-    <div class="card">
+    <div class="card" style="padding:14px;flex:1;display:flex;flex-direction:column">
+      <h2 style="margin-bottom:10px">Chat</h2>
+      <div id="chat-log" style="flex:1;height:340px;overflow-y:auto;background:rgba(8,0,18,0.95);border-radius:4px;border:1px solid rgba(123,47,255,0.3);padding:8px;display:flex;flex-direction:column;gap:3px;font-family:'Share Tech Mono',monospace;font-size:11px;scrollbar-width:thin;scrollbar-color:#3d0080 transparent"></div>
+      <div id="new-chatter-zone" style="min-height:1.6em;margin-top:6px;font-size:.72rem;font-family:'Share Tech Mono',monospace;letter-spacing:1px;color:#ffd700;display:flex;flex-direction:column;gap:3px"></div>
+    </div>
+    <div class="card" style="flex:1;display:flex;flex-direction:column;min-width:0">
+      <h2>In Chat <span id="chatter-count" style="color:#7b2fff;font-size:.6rem;letter-spacing:1px"></span></h2>
+      <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:8px;font-family:'Share Tech Mono',monospace;font-size:.75rem">
+        <span style="color:#888;letter-spacing:1px">VIEWERS</span>
+        <span id="viewer-count" style="color:#00f5ff;font-size:1.1rem;font-weight:bold">—</span>
+        <span id="viewer-warn" style="color:#ff2d78;font-size:.65rem;letter-spacing:1px;display:none">⚠ BELOW 3</span>
+      </div>
+      <div id="chatter-list" style="flex:1;overflow-y:auto;max-height:480px;font-size:.82rem;font-family:'Share Tech Mono',monospace;color:#c9a0dc"></div>
+      <div id="chatter-updated" style="font-size:.62rem;color:#3d3d5c;margin-top:10px;letter-spacing:1px">—</div>
+    </div>
+  </div>
+
+  <!-- Row 2: Shoutout | Custom User Titles | Unprompted Roasts -->
+  <div style="display:flex;gap:16px;align-items:stretch">
+    <div class="card" style="flex:1">
+      <h2>Shoutout</h2>
+      <p style="font-size:.78rem">Chat command: <span style="color:#9146ff">!so @username</span> (mod+)</p>
+      <div class="so-row">
+        <input id="so-input" class="so-input" placeholder="@username" autocomplete="off" spellcheck="false">
+        <button class="btn" style="margin:0;padding:7px 18px;font-size:.65rem;background:linear-gradient(135deg,#5a10cc,#9146ff)" onclick="sendShoutout()">Send Shoutout</button>
+      </div>
+      <div id="so-fb" style="margin-top:8px;font-size:.72rem;min-height:1.1em;letter-spacing:1px"></div>
+    </div>
+    <div class="card" style="flex:1">
       <h2>Custom User Titles</h2>
       <p>Give specific chatters a named badge next to their name.</p>
       <form class="t-form" onsubmit="addTitle(event)">
@@ -2305,163 +2449,102 @@ ${hasTokens ? `
       </form>
       <table><tbody id="titles-tbody"></tbody></table>
     </div>
-  </div>
-  <div style="flex:1;display:flex;flex-direction:column;gap:16px">
-    <div style="display:flex;gap:16px;align-items:stretch">
-      <div class="card" style="padding:14px;flex:3;display:flex;flex-direction:column">
-        <h2 style="margin-bottom:10px">Twitch Chat</h2>
-        <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;background:#080012;border-radius:4px;border:1px solid rgba(123,47,255,0.3);padding:24px">
-          <div style="font-family:'Share Tech Mono',monospace;font-size:.75rem;color:#888;text-align:center;letter-spacing:1px">Open Twitch chat in a popup window<br>to see sticker and extension messages</div>
-          <a href="https://www.twitch.tv/popout/${cfg.channel}/chat?popout=" target="twitch-chat-popup" onclick="window.open(this.href,'twitch-chat-popup','width=340,height=600,resizable=yes');return false;" style="display:inline-block;padding:12px 28px;background:linear-gradient(135deg,#5a10cc,#9146ff);color:#fff;font-family:'Share Tech Mono',monospace;font-size:.8rem;letter-spacing:2px;border-radius:4px;text-decoration:none;text-transform:uppercase">Open Chat Popout</a>
-          <div id="new-chatter-zone" style="min-height:1.6em;font-size:.72rem;font-family:'Share Tech Mono',monospace;letter-spacing:1px;color:#ffd700;display:flex;flex-direction:column;gap:3px;text-align:center"></div>
-        </div>
+    <div class="card" style="flex:1">
+      <h2>Unprompted Roasts</h2>
+      <div class="sitem" style="margin-bottom:6px">
+        <div class="sdot ${streamOnline ? 'on' : 'off'}" id="stream-status-dot"></div>
+        <span id="stream-status-label" style="color:${streamOnline ? '#00ff88' : '#888'}">Stream ${streamOnline ? 'Live' : 'Offline'}</span>
       </div>
-      <div class="card" style="flex:2;display:flex;flex-direction:column;min-width:0">
-        <h2>In Chat <span id="chatter-count" style="color:#7b2fff;font-size:.6rem;letter-spacing:1px"></span></h2>
-        <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:8px;font-family:'Share Tech Mono',monospace;font-size:.75rem">
-          <span style="color:#888;letter-spacing:1px">VIEWERS</span>
-          <span id="viewer-count" style="color:#00f5ff;font-size:1.1rem;font-weight:bold">—</span>
-          <span id="viewer-warn" style="color:#ff2d78;font-size:.65rem;letter-spacing:1px;display:none">⚠ BELOW 3</span>
-        </div>
-        <div id="chatter-list" style="flex:1;overflow-y:auto;max-height:520px;font-size:.82rem;font-family:'Share Tech Mono',monospace;color:#c9a0dc"></div>
-        <div id="chatter-updated" style="font-size:.62rem;color:#3d3d5c;margin-top:10px;letter-spacing:1px">—</div>
+      <div class="sitem" style="margin-bottom:10px">
+        <div class="sdot ${toasterRoastEnabled ? 'on' : 'off'}" id="roast-dot"></div>
+        <span id="roast-status" style="color:${toasterRoastEnabled ? '#00ff88' : '#ff2d78'}">${toasterRoastEnabled ? (streamOnline ? 'Active — fires every 10–15 min' : 'Armed (test mode only)') : 'Inactive'}</span>
       </div>
-    </div>
-    <div style="display:flex;gap:16px;align-items:flex-start">
-      <div class="card" style="flex:1">
-        <h2>Shoutout</h2>
-        <p style="font-size:.78rem">Chat command: <span style="color:#9146ff">!so @username</span> (mod+)</p>
-        <p style="margin-top:6px;font-size:.75rem">OBS Browser Source — <strong>600 × 160</strong>, transparent:</p>
-        <div class="url">${cfg.hostUrl}/shoutout.html</div>
-        <div class="so-row">
-          <input id="so-input" class="so-input" placeholder="@username" autocomplete="off" spellcheck="false">
-          <button class="btn" style="margin:0;padding:7px 18px;font-size:.65rem;background:linear-gradient(135deg,#5a10cc,#9146ff)" onclick="sendShoutout()">Send Shoutout</button>
-        </div>
-        <div id="so-fb" style="margin-top:8px;font-size:.72rem;min-height:1.1em;letter-spacing:1px"></div>
+      <p style="font-size:.78rem;margin-bottom:10px">Auto-enables when stream goes live.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="roast-toggle" onclick="toggleRoast()">${toasterRoastEnabled ? 'Disable' : 'Enable'}</button>
+        <button class="btn" id="test-mode-btn" onclick="toggleTestMode()" style="${testingMode ? 'background:linear-gradient(135deg,#7b2fff,#ff6b00)' : ''}">${testingMode ? 'Test Mode: ON' : 'Test Mode'}</button>
+        <button class="btn" style="background:linear-gradient(135deg,#7b2fff,#ff2d78)" onclick="fireRoastNow()">Fire Now</button>
       </div>
-      <div class="card" style="flex:1">
-        <h2>Queue</h2>
-        <p style="font-size:.78rem">Commands: <span style="color:#9146ff">!addme</span> · <span style="color:#9146ff">!leave</span> · <span style="color:#9146ff">!next</span> (mod+) · <span style="color:#9146ff">!clearqueue</span> (mod+)</p>
-        <p style="margin-top:6px;font-size:.75rem">OBS Browser Source — <strong>300 × 600</strong>, transparent:</p>
-        <div class="url">${cfg.hostUrl}/queue.html</div>
-        <div style="display:flex;gap:8px;margin-top:10px">
-          <button class="btn" style="margin:0;padding:7px 16px;font-size:.65rem" onclick="queueNext()">Next</button>
-          <button class="btn" style="margin:0;padding:7px 16px;font-size:.65rem;background:linear-gradient(135deg,#6b0000,#c0000c)" onclick="queueClear()">Clear</button>
-        </div>
-        <div id="queue-list"><div class="q-empty">Queue is empty</div></div>
-      </div>
+      <div id="roast-fb" style="margin-top:8px;font-size:.72rem;min-height:1.1em;letter-spacing:1px"></div>
     </div>
   </div>
-</div>
 
-<div class="card" style="margin-top:16px">
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-    <h2 style="margin:0">Commands</h2>
-    <a href="/commands" style="font-size:.63rem;color:#7b2fff;letter-spacing:1px;text-decoration:none;border:1px solid #3d0080;border-radius:3px;padding:3px 10px">MANAGE →</a>
-  </div>
-  <div id="cmd-pills" style="display:flex;flex-wrap:wrap;gap:5px">
-    ${[...Object.keys(CHAT_COMMANDS), '!so', '!shoutout', '!addme', '!leave', '!next', '!clearqueue', '!followage', '!roast', '!timeout', '!ban', '!unban'].map(cmd =>
-      `<span class="cmd-pill sys">${cmd}</span>`
-    ).join('')}
-  </div>
-  <div id="cmd-count" style="margin-top:8px;font-size:.63rem;color:#3d3d5c;letter-spacing:1px"></div>
-</div>
-
-<div class="card" style="margin-top:16px">
-  <h2>Custom Alert Sounds</h2>
-  <p>Upload audio files (MP3, WAV, OGG, WEBM, FLAC — max 20 MB each) to replace the built-in synth sounds. Changes take effect immediately in the browser source.</p>
-  <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-top:10px">
-    ${['follow','sub','resub','giftsub','bits','raid'].map(t => {
-      const clr = {follow:'#00f5ff',sub:'#bf00ff',resub:'#9d00ff',giftsub:'#ff2d78',bits:'#ffd700',raid:'#ff6b35'}[t];
-      return `<div style="background:#080012;border:1px solid #3d0080;border-radius:4px;padding:10px;text-align:center">
-        <div style="color:${clr};font-size:.68rem;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px">${t}</div>
-        <div id="sstat-${t}" style="font-size:.65rem;color:#4a2080;margin-bottom:6px;min-height:1em">—</div>
-        <label style="cursor:pointer;display:block">
-          <input type="file" accept="audio/*" style="display:none" onchange="uploadSound('${t}',this)">
-          <span style="display:block;font-size:.62rem;letter-spacing:1px;padding:4px 0;border:1px solid ${clr};border-radius:3px;color:${clr};text-transform:uppercase;cursor:pointer">Upload</span>
-        </label>
-        <button onclick="removeSound('${t}')" id="sdel-${t}" style="display:none;width:100%;margin-top:4px;background:transparent;border:1px solid #ff2d78;color:#ff2d78;border-radius:3px;padding:3px;cursor:pointer;font-family:inherit;font-size:.62rem">Remove</button>
-      </div>`;
-    }).join('')}
-  </div>
-  <div id="sound-fb" style="margin-top:10px;font-size:.72rem;min-height:1.1em;letter-spacing:1px"></div>
-</div>
-
-<div class="bottom-row" style="margin-top:16px">
-  <div class="card">
-    <h2>OBS Browser Sources</h2>
-    <p>Alerts overlay — <strong>1920 × 300</strong>, transparent, bottom of scene:</p>
-    <div class="url">${cfg.hostUrl}/alerts.html</div>
-    <p style="margin-top:10px">Chat overlay — <strong>380 × 700</strong>, transparent, right side:</p>
-    <div class="url">${cfg.hostUrl}/chat.html</div>
-    <p style="margin-top:10px">Media player (custom commands) — <strong>1920 × 1080</strong>, transparent, top layer:</p>
-    <div class="url">${cfg.hostUrl}/media.html</div>
-  </div>
-  <div class="card">
-    <h2>Test Alerts</h2>
-    <p>Fire a test alert to your OBS overlay. Make sure it's open first.</p>
-    <div class="test-grid">
-      <button class="tbtn follow"  onclick="test('follow')">Follow</button>
-      <button class="tbtn sub"     onclick="test('sub')">Sub</button>
-      <button class="tbtn resub"   onclick="test('resub')">Resub</button>
-      <button class="tbtn giftsub" onclick="test('giftsub')">Gift Sub</button>
-      <button class="tbtn bits"    onclick="test('bits')">Bits</button>
-      <button class="tbtn raid"    onclick="test('raid')">Raid</button>
-    </div>
-    <div id="test-fb"></div>
-  </div>
-  <div class="card">
-    <h2>Re-authorize</h2>
-    <p>Use this if you need to re-connect your Twitch account.</p>
-    <a class="btn" href="${authUrl}">Re-connect Twitch</a>
-  </div>
-  <div class="card">
-    <h2>Bot Account</h2>
-    ${(() => {
-      const bot = loadBotTokens();
-      return `<div class="sitem" style="margin-bottom:10px">
-        <div class="sdot ${bot ? 'on' : 'off'}"></div>
-        <span style="color:${bot ? '#00ff88' : '#ff2d78'}">${bot ? `Connected as ${bot.bot_login || 'bot'}` : 'Not connected'}</span>
+  <!-- Row 3: Commands | Popouts -->
+  <div style="display:flex;gap:16px;align-items:flex-start">
+    <div class="card" style="flex:3">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <h2 style="margin:0">Commands</h2>
+        <a href="/commands" target="_blank" style="font-size:.63rem;color:#7b2fff;letter-spacing:1px;text-decoration:none;border:1px solid #3d0080;border-radius:3px;padding:3px 10px">MANAGE ↗</a>
       </div>
-      <p style="font-size:.78rem;margin-bottom:8px">AngryToasterAI sends chat responses for queue commands. Make sure it's <strong>modded</strong> in your channel.</p>
-      <a class="btn" href="${buildBotAuthUrl()}" style="display:inline-block">${bot ? 'Re-connect Bot' : 'Connect Bot Account'}</a>`;
-    })()}
+      <div id="cmd-pills" style="display:flex;flex-wrap:wrap;gap:5px">
+        ${[...Object.keys(CHAT_COMMANDS), '!so', '!shoutout', '!addme', '!leave', '!next', '!clearqueue', '!followage', '!roast', '!timeout', '!ban', '!unban'].map(cmd =>
+          `<span class="cmd-pill sys">${cmd}</span>`
+        ).join('')}
+      </div>
+      <div id="cmd-count" style="margin-top:8px;font-size:.63rem;color:#3d3d5c;letter-spacing:1px"></div>
+    </div>
+    <div class="card" style="flex:2">
+      <h2>Popouts</h2>
+      <p style="font-size:.78rem;margin-bottom:12px">Open Twitch panels in separate windows.</p>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <button class="btn" style="margin:0;text-align:left" onclick="window.open('https://www.twitch.tv/popout/${cfg.channel}/chat?popout=','twitch-chat-pop','width=340,height=600,resizable=yes')">💬 Twitch Chat</button>
+        <button class="btn" style="margin:0;text-align:left;background:linear-gradient(135deg,#0a1a3a,#1a3a6b)" onclick="window.open('https://dashboard.twitch.tv/popout/u/${cfg.channel}/stream-manager/activity-feed?uuid=aca09f810f94482b87f507824521bb38','twitch-activity','width=400,height=700,resizable=yes')">📋 Activity Feed</button>
+        <button class="btn" style="margin:0;text-align:left;background:linear-gradient(135deg,#0a1a3a,#1a3a6b)" onclick="window.open('https://dashboard.twitch.tv/u/${cfg.channel}/stream-manager','twitch-manager','width=1200,height=800,resizable=yes')">🎛️ Stream Manager</button>
+      </div>
+    </div>
   </div>
-  <div class="card">
-    <h2>Unprompted Roasts</h2>
-    <div class="sitem" style="margin-bottom:6px">
-      <div class="sdot ${streamOnline ? 'on' : 'off'}" id="stream-status-dot"></div>
-      <span id="stream-status-label" style="color:${streamOnline ? '#00ff88' : '#888'}">Stream ${streamOnline ? 'Live' : 'Offline'}</span>
+
+  <!-- Row 4: Test Alerts | Queue | Auth -->
+  <div style="display:flex;gap:16px;align-items:flex-start">
+    <div class="card" style="flex:1">
+      <h2>Test Alerts</h2>
+      <p>Fire a test alert to your OBS overlay.</p>
+      <div class="test-grid">
+        <button class="tbtn follow"  onclick="test('follow')">Follow</button>
+        <button class="tbtn sub"     onclick="test('sub')">Sub</button>
+        <button class="tbtn resub"   onclick="test('resub')">Resub</button>
+        <button class="tbtn giftsub" onclick="test('giftsub')">Gift Sub</button>
+        <button class="tbtn bits"    onclick="test('bits')">Bits</button>
+        <button class="tbtn raid"    onclick="test('raid')">Raid</button>
+      </div>
+      <div id="test-fb"></div>
     </div>
-    <div class="sitem" style="margin-bottom:10px">
-      <div class="sdot ${toasterRoastEnabled ? 'on' : 'off'}" id="roast-dot"></div>
-      <span id="roast-status" style="color:${toasterRoastEnabled ? '#00ff88' : '#ff2d78'}">${toasterRoastEnabled ? (streamOnline ? 'Active — fires every 10–15 min' : 'Armed (test mode only)') : 'Inactive'}</span>
+    <div class="card" style="flex:1">
+      <h2>Queue</h2>
+      <p style="font-size:.78rem">Commands: <span style="color:#9146ff">!addme</span> · <span style="color:#9146ff">!leave</span> · <span style="color:#9146ff">!next</span> (mod+) · <span style="color:#9146ff">!clearqueue</span> (mod+)</p>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button class="btn" style="margin:0;padding:7px 16px;font-size:.65rem" onclick="queueNext()">Next</button>
+        <button class="btn" style="margin:0;padding:7px 16px;font-size:.65rem;background:linear-gradient(135deg,#6b0000,#c0000c)" onclick="queueClear()">Clear</button>
+      </div>
+      <div id="queue-list"><div class="q-empty">Queue is empty</div></div>
     </div>
-    <p style="font-size:.78rem;margin-bottom:10px">Auto-enables when stream goes live. API calls disabled when offline unless Test Mode is on.</p>
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button class="btn" id="roast-toggle" onclick="toggleRoast()">${toasterRoastEnabled ? 'Disable' : 'Enable'}</button>
-      <button class="btn" id="test-mode-btn" onclick="toggleTestMode()" style="${testingMode ? 'background:linear-gradient(135deg,#7b2fff,#ff6b00)' : ''}">${testingMode ? 'Test Mode: ON' : 'Test Mode'}</button>
-      <button class="btn" style="background:linear-gradient(135deg,#7b2fff,#ff2d78)" onclick="fireRoastNow()">Fire Now</button>
+    <div class="card" style="flex:1">
+      <h2>Authorization</h2>
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div>
+          <div style="font-size:.65rem;color:#7b2fff;letter-spacing:2px;margin-bottom:6px">TWITCH</div>
+          <div class="sitem" style="margin-bottom:6px"><div class="sdot ${hasTokens ? 'on' : 'off'}"></div><span style="color:${hasTokens ? '#00ff88' : '#ff2d78'};font-size:.75rem">${hasTokens ? 'Connected as ' + cfg.channel : 'Not connected'}</span></div>
+          <a class="btn" href="${authUrl}" style="display:inline-block;padding:6px 16px;font-size:.65rem;margin:0">Re-connect Twitch</a>
+        </div>
+        <div>
+          <div style="font-size:.65rem;color:#7b2fff;letter-spacing:2px;margin-bottom:6px">BOT ACCOUNT</div>
+          ${(() => {
+            const bot = loadBotTokens();
+            return `<div class="sitem" style="margin-bottom:6px"><div class="sdot ${bot ? 'on' : 'off'}"></div><span style="color:${bot ? '#00ff88' : '#ff2d78'};font-size:.75rem">${bot ? 'Connected as ' + (bot.bot_login || 'bot') : 'Not connected'}</span></div>
+            <p style="font-size:.72rem;margin-bottom:6px">Must be <strong>modded</strong> in your channel.</p>
+            <a class="btn" href="${buildBotAuthUrl()}" style="display:inline-block;padding:6px 16px;font-size:.65rem;margin:0">${bot ? 'Re-connect Bot' : 'Connect Bot'}</a>`;
+          })()}
+        </div>
+        <div>
+          <div style="font-size:.65rem;color:#7b2fff;letter-spacing:2px;margin-bottom:6px">SPOTIFY</div>
+          <div class="sitem" style="margin-bottom:6px"><div class="sdot ${loadSpotifyTokens() ? 'on' : 'off'}"></div><span style="color:${loadSpotifyTokens() ? '#00ff88' : '#ff2d78'};font-size:.75rem">${loadSpotifyTokens() ? 'Connected' : 'Not connected'}</span></div>
+          ${!loadSpotifyTokens() ? `<p style="font-size:.72rem;margin-bottom:6px;color:#7b2fff">Set SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_CALLBACK_URL first.</p>` : ''}
+          <a class="btn" href="/auth/spotify" style="display:inline-block;padding:6px 16px;font-size:.65rem;margin:0;background:linear-gradient(135deg,#0f7a3a,#1DB954)">${loadSpotifyTokens() ? 'Re-connect Spotify' : 'Connect Spotify'}</a>
+        </div>
+      </div>
     </div>
-    <div id="roast-fb" style="margin-top:8px;font-size:.72rem;min-height:1.1em;letter-spacing:1px"></div>
   </div>
-  <div class="card">
-    <h2>Spotify Now Playing</h2>
-    <div class="sitem" style="margin-bottom:10px">
-      <div class="sdot ${loadSpotifyTokens() ? 'on' : 'off'}"></div>
-      <span style="color:${loadSpotifyTokens() ? '#00ff88' : '#ff2d78'}">${loadSpotifyTokens() ? 'Connected' : 'Not connected'}</span>
-    </div>
-    ${loadSpotifyTokens() ? `
-    <p>Add this as a Browser Source in OBS:</p>
-    <div class="url">${cfg.hostUrl}/spotify.html</div>
-    <p style="margin-top:6px;font-size:.75rem;color:#7b2fff">500 × 140, transparent</p>
-    ` : `
-    <p>Set these env vars first, then connect:</p>
-    <p style="font-size:.75rem;color:#7b2fff;line-height:1.8">SPOTIFY_CLIENT_ID<br>SPOTIFY_CLIENT_SECRET<br>SPOTIFY_CALLBACK_URL</p>
-    <a class="btn" href="/auth/spotify" style="margin-top:8px;display:inline-block">Connect Spotify</a>
-    `}
-    <a class="btn" href="/auth/spotify" style="margin-top:8px;display:inline-block;background:linear-gradient(135deg,#0f7a3a,#1DB954)">Re-connect Spotify</a>
-  </div>
+
 </div>
 
 ` : `
@@ -2653,6 +2736,7 @@ function showNewChatterAlert(displayName) {
     try {
       const m = JSON.parse(e.data);
       if (FEED_TYPES.has(m.type)) addFeedEvent(m);
+      if (m.type === 'stream_update') refreshStreamInfo();
       if (m.type === 'chat_message') addChatLogMessage(m);
       if (m.type === 'queue_update') renderQueue(m.queue);
       if (m.type === 'new_chatter') showNewChatterAlert(m.displayName || m.username);
@@ -2921,6 +3005,21 @@ async function fireRoastNow() {
   fb.style.color = '#00ff88'; fb.textContent = '\\u2713 Fired!';
   setTimeout(function() { fb.textContent = ''; }, 3000);
 }
+
+// ── Stream title/game ────────────────────────────────────────────────
+async function refreshStreamInfo() {
+  try {
+    var r = await fetch('/api/channel');
+    var d = await r.json();
+    var titleEl = document.getElementById('stream-title-hdr');
+    var gameEl  = document.getElementById('stream-game-hdr');
+    var sepEl   = document.getElementById('stream-sep');
+    if (titleEl) titleEl.textContent = d.title || '';
+    if (gameEl)  gameEl.textContent  = d.game  || '';
+    if (sepEl)   sepEl.style.display = (d.title && d.game) ? '' : 'none';
+  } catch {}
+}
+refreshStreamInfo();
 </script>
 
 </body></html>`;
