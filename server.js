@@ -1837,6 +1837,16 @@ app.get('/api/chatters', (_req, res) => {
   res.json({ count: chatters.size, users: [...chatters].sort() });
 });
 
+app.get('/api/stream', async (_req, res) => {
+  if (!broadcasterId) return res.json({ live: false, viewers: 0 });
+  try {
+    const r = await fetch(`https://api.twitch.tv/helix/streams?user_id=${broadcasterId}`, { headers: twitchHeaders() });
+    const d = await r.json();
+    const stream = d.data?.[0];
+    res.json({ live: !!stream, viewers: stream?.viewer_count ?? 0 });
+  } catch { res.json({ live: false, viewers: 0 }); }
+});
+
 app.post('/api/toaster-roast/toggle', (_req, res) => {
   toasterRoastEnabled = !toasterRoastEnabled;
   if (toasterRoastEnabled) {
@@ -2278,7 +2288,10 @@ ${hasTokens ? `
 <div class="main-row">
   <div class="col-left">
     <div class="card" style="padding:14px">
-      <h2>Event Feed</h2>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <h2 style="margin:0">Event Feed</h2>
+        <button class="btn" style="margin:0;padding:5px 14px;font-size:.62rem;background:linear-gradient(135deg,#3a0000,#6b0000)" onclick="fetch('/chat/clear',{method:'POST'})">Clear Chat</button>
+      </div>
       <div id="event-feed"><div class="ev-empty">Waiting for events...</div></div>
     </div>
     <div class="card">
@@ -2296,20 +2309,16 @@ ${hasTokens ? `
   <div style="flex:1;display:flex;flex-direction:column;gap:16px">
     <div style="display:flex;gap:16px;align-items:stretch">
       <div class="card" style="padding:14px;flex:3">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-          <h2 style="margin:0">Chat Preview</h2>
-          <button class="btn" style="margin:0;padding:5px 14px;font-size:.62rem;background:linear-gradient(135deg,#3a0000,#6b0000)" onclick="fetch('/chat/clear',{method:'POST'})">Clear Chat</button>
-        </div>
-        <div id="chat-log" style="height:340px;overflow-y:auto;background:rgba(8,0,18,0.95);border-radius:4px;border:1px solid rgba(123,47,255,0.3);padding:8px;display:flex;flex-direction:column;gap:3px;font-family:'Share Tech Mono',monospace;font-size:11px;scrollbar-width:thin;scrollbar-color:#3d0080 transparent"></div>
-        <div id="new-chatter-zone" style="min-height:1.6em;margin-top:6px;font-size:.72rem;font-family:'Share Tech Mono',monospace;letter-spacing:1px;color:#ffd700;display:flex;flex-direction:column;gap:3px"></div>
-        <div style="display:flex;gap:7px;margin-top:4px">
-          <input id="chat-send-input" class="so-input" placeholder="Send as emenblade..." autocomplete="off" spellcheck="false" style="flex:1" onkeydown="if(event.key==='Enter')sendDashboardChat()">
-          <button class="btn" style="margin:0;padding:7px 16px;font-size:.65rem" onclick="sendDashboardChat()">Send</button>
-        </div>
-        <div id="chat-send-fb" style="margin-top:4px;font-size:.68rem;min-height:1em;letter-spacing:1px"></div>
+        <h2 style="margin-bottom:10px">Twitch Chat</h2>
+        <iframe id="twitch-chat-embed" style="width:100%;height:400px;border:none;border-radius:4px" allowfullscreen></iframe>
       </div>
       <div class="card" style="flex:2;display:flex;flex-direction:column;min-width:0">
         <h2>In Chat <span id="chatter-count" style="color:#7b2fff;font-size:.6rem;letter-spacing:1px"></span></h2>
+        <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:8px;font-family:'Share Tech Mono',monospace;font-size:.75rem">
+          <span style="color:#888;letter-spacing:1px">VIEWERS</span>
+          <span id="viewer-count" style="color:#00f5ff;font-size:1.1rem;font-weight:bold">—</span>
+          <span id="viewer-warn" style="color:#ff2d78;font-size:.65rem;letter-spacing:1px;display:none">⚠ BELOW 3</span>
+        </div>
         <div id="chatter-list" style="flex:1;overflow-y:auto;max-height:520px;font-size:.82rem;font-family:'Share Tech Mono',monospace;color:#c9a0dc"></div>
         <div id="chatter-updated" style="font-size:.62rem;color:#3d3d5c;margin-top:10px;letter-spacing:1px">—</div>
       </div>
@@ -2834,29 +2843,34 @@ async function refreshChatters() {
 refreshChatters();
 setInterval(refreshChatters, 15000);
 
-// ── Dashboard Chat Send ──────────────────────────────────────────────
-async function sendDashboardChat() {
-  const input = document.getElementById('chat-send-input');
-  const fb    = document.getElementById('chat-send-fb');
-  const msg   = (input.value || '').trim();
-  if (!msg) return;
+// ── Twitch Chat Embed ────────────────────────────────────────────────
+(function() {
+  var iframe = document.getElementById('twitch-chat-embed');
+  if (iframe) iframe.src = 'https://www.twitch.tv/embed/${cfg.channel}/chat?parent=' + window.location.hostname;
+})();
+
+// ── Viewer Count ─────────────────────────────────────────────────────
+async function refreshViewerCount() {
   try {
-    const r = await fetch('/chat/send', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: msg }),
-    });
-    const d = await r.json();
-    if (d.ok) {
-      input.value = '';
-      if (fb) { fb.style.color = '#00ff88'; fb.textContent = '\\u2713 sent'; setTimeout(() => { if (fb) fb.textContent = ''; }, 1500); }
+    var r = await fetch('/api/stream');
+    var d = await r.json();
+    var el = document.getElementById('viewer-count');
+    var warn = document.getElementById('viewer-warn');
+    if (!el) return;
+    if (!d.live) {
+      el.textContent = '—';
+      el.style.color = '#888';
+      if (warn) warn.style.display = 'none';
     } else {
-      if (fb) { fb.style.color = '#ff2d78'; fb.textContent = '\\u2717 ' + (d.error || 'failed'); setTimeout(() => { if (fb) fb.textContent = ''; }, 3000); }
+      el.textContent = d.viewers;
+      var low = d.viewers < 3;
+      el.style.color = low ? '#ff2d78' : '#00f5ff';
+      if (warn) warn.style.display = low ? '' : 'none';
     }
-  } catch {
-    if (fb) { fb.style.color = '#ff2d78'; fb.textContent = '\\u2717 request failed'; setTimeout(() => { if (fb) fb.textContent = ''; }, 3000); }
-  }
+  } catch {}
 }
+refreshViewerCount();
+setInterval(refreshViewerCount, 30000);
 
 // ── Shoutout UI ─────────────────────────────────────────────────────
 async function sendShoutout() {
