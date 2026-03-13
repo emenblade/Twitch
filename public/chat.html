@@ -189,27 +189,6 @@
       margin: 0 1px;
     }
 
-    /* ── Join / leave notifications ─────────────────────────────── */
-    .join-notif {
-      display: flex;
-      align-items: center;
-      gap: 5px;
-      padding: 2px 8px;
-      font-size: 10px;
-      color: rgba(123, 47, 255, 0.5);
-      letter-spacing: 0.5px;
-      flex-shrink: 0;
-      animation: msgIn 0.2s ease-out forwards;
-      opacity: 0;
-    }
-    .join-notif .jn-name { color: rgba(191, 0, 255, 0.65); }
-
-    /* ── First message highlight ──────────────────────────────────── */
-    .msg.first-msg {
-      border-left-color: #ffd700;
-      background: rgba(255, 215, 0, 0.06);
-    }
-    .badge-first { color: #ffd700; }
   </style>
 </head>
 <body>
@@ -407,23 +386,21 @@ function buildBadges(badges, username) {
   return parts.join('');
 }
 
-const seenUsers = new Set();
-
-function addJoinNotif(username, isJoin) {
+function removeUserMessages(username) {
   const chat = document.getElementById('chat');
-  const el   = document.createElement('div');
-  el.className = 'join-notif';
-  el.innerHTML = `<span>${isJoin ? '→' : '←'}</span><span class="jn-name">${escHtml(username)}</span><span>${isJoin ? 'joined' : 'left'}</span>`;
-  chat.appendChild(el);
-  // Auto-remove after 4 seconds
-  setTimeout(() => {
-    el.style.transition = 'opacity 0.4s';
-    el.style.opacity = '0';
-    setTimeout(() => el.remove(), 400);
-  }, 4000);
-  // Respect max message limit
-  const all = chat.querySelectorAll('.msg, .join-notif');
-  if (all.length > MAX_MESSAGES + 5) all[0].remove();
+  for (const el of chat.querySelectorAll(`.msg[data-username="${username}"]`)) {
+    el.classList.add('fade-out');
+    el.addEventListener('animationend', () => el.remove(), { once: true });
+  }
+}
+
+function removeMessageById(msgId) {
+  if (!msgId) return;
+  const el = document.querySelector(`#chat .msg[data-msg-id="${msgId}"]`);
+  if (el) {
+    el.classList.add('fade-out');
+    el.addEventListener('animationend', () => el.remove(), { once: true });
+  }
 }
 
 function addMessage(tags, message) {
@@ -432,19 +409,19 @@ function addMessage(tags, message) {
 
   const username  = tags['display-name'] || 'user';
   const lname     = username.toLowerCase();
-  const isFirst   = !seenUsers.has(lname) && lname !== 'angrytoasterai';
-  seenUsers.add(lname);
 
   const el = document.createElement('div');
-  el.className = 'msg' + (isFirst ? ' first-msg' : '');
+  el.className = 'msg';
   el.style.setProperty('--user-color', color);
+  el.dataset.username = lname;
+  const msgId = tags['id'];
+  if (msgId) el.dataset.msgId = msgId;
 
-  const firstBadge = isFirst ? '<span class="badge badge-first">FIRST</span>' : '';
   const badgeHtml  = buildBadges(tags.badges, username);
   const textHtml   = renderEmotes(message, tags.emotes);
 
   el.innerHTML = `
-    ${(badgeHtml || firstBadge) ? `<span class="badges">${firstBadge}${badgeHtml}</span>` : ''}
+    ${badgeHtml ? `<span class="badges">${badgeHtml}</span>` : ''}
     <span class="name">${escHtml(username)}</span>
     <span class="colon">:</span>
     <span class="text">${textHtml}</span>
@@ -515,17 +492,18 @@ async function connect() {
       if (!line) continue;
       if (line.startsWith('PING')) { ws.send('PONG :tmi.twitch.tv'); continue; }
 
-      // JOIN
-      const joinMatch = line.match(/^:(\w+)!\S+ JOIN #\S+$/);
-      if (joinMatch) {
-        if (joinMatch[1].toLowerCase() !== ownNick.toLowerCase()) addJoinNotif(joinMatch[1], true);
-        continue;
-      }
+      // JOIN / PART — tracked on dashboard only
+      if (line.match(/^:\w+!\S+ (JOIN|PART) #\S+$/)) continue;
 
-      // PART
-      const partMatch = line.match(/^:(\w+)!\S+ PART #\S+$/);
-      if (partMatch) {
-        if (partMatch[1].toLowerCase() !== ownNick.toLowerCase()) addJoinNotif(partMatch[1], false);
+      // CLEARCHAT :username — ban or timeout, remove their messages
+      const clearChatMatch = line.match(/^@\S+ :tmi\.twitch\.tv CLEARCHAT #\S+ :(\S+)$/);
+      if (clearChatMatch) { removeUserMessages(clearChatMatch[1].toLowerCase()); continue; }
+
+      // CLEARMSG — single message deleted
+      const clearMsgMatch = line.match(/^@(\S+) :tmi\.twitch\.tv CLEARMSG #/);
+      if (clearMsgMatch) {
+        const ct = parseTags(clearMsgMatch[1]);
+        removeMessageById(ct['target-msg-id']);
         continue;
       }
 
