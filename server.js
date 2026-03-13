@@ -2383,7 +2383,7 @@ function setupPageHtml(hasTokens, authUrl) {
     <h1>⚡ DASHBOARD</h1>
     <div class="sub">STREAM CONTROL // EMENBLADE</div>
     <div id="stream-info" style="margin-top:5px;font-size:.72rem;font-family:'Share Tech Mono',monospace;color:#c9a0dc;letter-spacing:1px;min-height:1.2em">
-      <span id="stream-title-hdr" style="color:#e0c3ff"></span><span id="stream-sep" style="color:#3d3d5c;display:none"> · </span><span id="stream-game-hdr" style="color:#9146ff"></span>
+      <a id="stream-info-link" href="https://dashboard.twitch.tv/u/${cfg.channel}/stream-manager" target="_blank" style="color:inherit;text-decoration:none" title="Edit stream info"><span id="stream-title-hdr" style="color:#e0c3ff"></span><span id="stream-sep" style="color:#3d3d5c;display:none"> · </span><span id="stream-game-hdr" style="color:#9146ff"></span></a>
     </div>
   </div>
   <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px">
@@ -2489,7 +2489,7 @@ ${hasTokens ? `
       <div style="display:flex;flex-direction:column;gap:8px">
         <button class="btn" style="margin:0;text-align:left" onclick="window.open('https://www.twitch.tv/popout/${cfg.channel}/chat?popout=','twitch-chat-pop','width=340,height=600,resizable=yes')">💬 Twitch Chat</button>
         <button class="btn" style="margin:0;text-align:left;background:linear-gradient(135deg,#0a1a3a,#1a3a6b)" onclick="window.open('https://dashboard.twitch.tv/popout/u/${cfg.channel}/stream-manager/activity-feed?uuid=aca09f810f94482b87f507824521bb38','twitch-activity','width=400,height=700,resizable=yes')">📋 Activity Feed</button>
-        <button class="btn" style="margin:0;text-align:left;background:linear-gradient(135deg,#0a1a3a,#1a3a6b)" onclick="window.open('https://dashboard.twitch.tv/u/${cfg.channel}/stream-manager','twitch-manager','width=1200,height=800,resizable=yes')">🎛️ Stream Manager</button>
+        <button class="btn" style="margin:0;text-align:left;background:linear-gradient(135deg,#0a1a3a,#1a3a6b)" onclick="window.open('https://dashboard.twitch.tv/u/${cfg.channel}/stream-manager/edit-stream-info','twitch-editinfo','width=500,height=400,resizable=yes')">✏️ Edit Stream Info</button>
       </div>
     </div>
   </div>
@@ -2540,6 +2540,10 @@ ${hasTokens ? `
           <div class="sitem" style="margin-bottom:6px"><div class="sdot ${loadSpotifyTokens() ? 'on' : 'off'}"></div><span style="color:${loadSpotifyTokens() ? '#00ff88' : '#ff2d78'};font-size:.75rem">${loadSpotifyTokens() ? 'Connected' : 'Not connected'}</span></div>
           ${!loadSpotifyTokens() ? `<p style="font-size:.72rem;margin-bottom:6px;color:#7b2fff">Set SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_CALLBACK_URL first.</p>` : ''}
           <a class="btn" href="/auth/spotify" style="display:inline-block;padding:6px 16px;font-size:.65rem;margin:0;background:linear-gradient(135deg,#0f7a3a,#1DB954)">${loadSpotifyTokens() ? 'Re-connect Spotify' : 'Connect Spotify'}</a>
+        </div>
+        <div>
+          <div style="font-size:.65rem;color:#7b2fff;letter-spacing:2px;margin-bottom:6px">CLAUDE API</div>
+          <a class="btn" href="https://console.anthropic.com" target="_blank" style="display:inline-block;padding:6px 16px;font-size:.65rem;margin:0;background:linear-gradient(135deg,#1a0a2e,#5a3a8a)">Anthropic Console ↗</a>
         </div>
       </div>
     </div>
