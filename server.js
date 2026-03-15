@@ -1068,6 +1068,8 @@ async function createSubscription(type, version, condition) {
   });
   if (res.ok) {
     console.log(`  ✓ Subscribed to ${type}`);
+  } else if (res.status === 409) {
+    console.log(`  ~ Already subscribed to ${type} (ok)`);
   } else {
     const err = await res.text();
     console.error(`  ✗ Failed ${type}: ${err}`);
@@ -1077,6 +1079,7 @@ async function createSubscription(type, version, condition) {
 // ── EventSub WebSocket ────────────────────────────────────────────────────────
 let sessionId      = null;
 let eventSubWs     = null;
+let pendingOldWs   = null;   // kept alive during reconnect, terminated after new session_welcome
 let broadcasterId  = null;
 let reconnectTimer = null;
 
@@ -1087,7 +1090,7 @@ async function connectEventSub(url = 'wss://eventsub.wss.twitch.tv/ws') {
   }
 
   clearTimeout(reconnectTimer);
-  if (eventSubWs) { eventSubWs.removeAllListeners(); eventSubWs.terminate(); }
+  if (eventSubWs) { eventSubWs.removeAllListeners(); eventSubWs.terminate(); eventSubWs = null; }
 
   console.log('Connecting to Twitch EventSub...');
   eventSubWs = new WebSocket(url);
@@ -1099,12 +1102,18 @@ async function connectEventSub(url = 'wss://eventsub.wss.twitch.tv/ws') {
     const type = msg.metadata?.message_type;
 
     if (type === 'session_welcome') {
+      // If this welcome is from a reconnect, terminate the old WS now
+      if (pendingOldWs) { pendingOldWs.removeAllListeners(); pendingOldWs.terminate(); pendingOldWs = null; }
       sessionId = msg.payload.session.id;
       console.log(`EventSub session: ${sessionId}`);
       await setupSubscriptions();
 
     } else if (type === 'session_reconnect') {
       console.log('EventSub requesting reconnect...');
+      // Keep old WS alive until new one gets session_welcome
+      pendingOldWs = eventSubWs;
+      pendingOldWs.removeAllListeners('close');  // prevent spurious reconnect timer
+      eventSubWs = null;
       connectEventSub(msg.payload.session.reconnect_url);
 
     } else if (type === 'notification') {
@@ -1118,6 +1127,7 @@ async function connectEventSub(url = 'wss://eventsub.wss.twitch.tv/ws') {
 
   eventSubWs.on('close', (code) => {
     console.log(`EventSub closed (${code}), reconnecting in 5s...`);
+    if (pendingOldWs) { pendingOldWs.removeAllListeners(); pendingOldWs.terminate(); pendingOldWs = null; }
     reconnectTimer = setTimeout(() => connectEventSub(), 5000);
   });
 
@@ -1585,6 +1595,15 @@ app.get('/test/:type', (req, res) => {
   if (!alert) return res.status(404).json({ error: 'Unknown type. Use: follow, sub, resub, giftsub, bits, raid' });
   broadcast(alert);
   res.json({ ok: true, sent: alert });
+});
+
+// ── EventSub subscription status ─────────────────────────────────────────────
+app.get('/subs', async (_req, res) => {
+  try {
+    const r = await fetch('https://api.twitch.tv/helix/eventsub/subscriptions', { headers: twitchHeaders() });
+    if (!r.ok) return res.status(r.status).json({ error: await r.text() });
+    res.json(await r.json());
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.get('/titles', (_req, res) => res.json(loadTitles()));
@@ -2412,7 +2431,7 @@ ${hasTokens ? `
     </div>
     <div class="card" style="padding:14px;flex:1;display:flex;flex-direction:column">
       <h2 style="margin-bottom:10px">Chat</h2>
-      <div id="chat-log" style="flex:1;height:340px;overflow-y:auto;background:rgba(8,0,18,0.95);border-radius:4px;border:1px solid rgba(123,47,255,0.3);padding:8px;display:flex;flex-direction:column;gap:3px;font-family:'Share Tech Mono',monospace;font-size:11px;scrollbar-width:thin;scrollbar-color:#3d0080 transparent"></div>
+      <div id="chat-log" style="height:480px;overflow-y:auto;background:rgba(8,0,18,0.95);border-radius:4px;border:1px solid rgba(123,47,255,0.3);padding:8px;display:flex;flex-direction:column;gap:3px;font-family:'Share Tech Mono',monospace;font-size:11px;scrollbar-width:thin;scrollbar-color:#3d0080 transparent"></div>
       <div id="new-chatter-zone" style="min-height:1.6em;margin-top:6px;font-size:.72rem;font-family:'Share Tech Mono',monospace;letter-spacing:1px;color:#ffd700;display:flex;flex-direction:column;gap:3px"></div>
     </div>
     <div class="card" style="flex:1;display:flex;flex-direction:column;min-width:0">
@@ -2524,7 +2543,11 @@ ${hasTokens ? `
         <div>
           <div style="font-size:.65rem;color:#7b2fff;letter-spacing:2px;margin-bottom:6px">TWITCH</div>
           <div class="sitem" style="margin-bottom:6px"><div class="sdot ${hasTokens ? 'on' : 'off'}"></div><span style="color:${hasTokens ? '#00ff88' : '#ff2d78'};font-size:.75rem">${hasTokens ? 'Connected as ' + cfg.channel : 'Not connected'}</span></div>
-          <a class="btn" href="${authUrl}" style="display:inline-block;padding:6px 16px;font-size:.65rem;margin:0">Re-connect Twitch</a>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <a class="btn" href="${authUrl}" style="display:inline-block;padding:6px 16px;font-size:.65rem;margin:0">Re-connect Twitch</a>
+            <button class="btn" onclick="checkSubs()" style="padding:6px 16px;font-size:.65rem;margin:0;background:linear-gradient(135deg,#0d3040,#005a78)">Check Subs</button>
+          </div>
+          <div id="subs-fb" style="margin-top:8px;font-size:.68rem;color:#888;letter-spacing:1px;max-height:120px;overflow-y:auto"></div>
         </div>
         <div>
           <div style="font-size:.65rem;color:#7b2fff;letter-spacing:2px;margin-bottom:6px">BOT ACCOUNT</div>
@@ -2583,6 +2606,23 @@ async function test(type) {
     fb.textContent = d.ok ? '\\u2713 ' + type + ' alert sent' : '\\u2717 ' + (d.error || 'error');
   } catch { fb.textContent = '\\u2717 Request failed'; }
   setTimeout(() => fb.textContent = '', 3000);
+}
+
+// ── Subscription status ────────────────────────────────────────────
+async function checkSubs() {
+  const fb = document.getElementById('subs-fb');
+  fb.textContent = 'Checking...';
+  try {
+    const d = await fetch('/subs').then(r => r.json());
+    const subs = d.data || [];
+    if (!subs.length) { fb.textContent = '\\u26a0 No active subscriptions found — try re-connecting Twitch.'; return; }
+    const enabled = subs.filter(s => s.status === 'enabled').map(s => s.type);
+    const failed  = subs.filter(s => s.status !== 'enabled').map(s => s.type + ' (' + s.status + ')');
+    let html = '<span style="color:#00ff88">\\u2713 ' + enabled.length + ' active</span>';
+    if (!enabled.includes('channel.follow')) html += ' &nbsp;<span style="color:#ff2d78">\\u26a0 channel.follow MISSING — re-connect Twitch to re-auth scopes</span>';
+    if (failed.length) html += '<br><span style="color:#ff6b35">\\u2717 Failed: ' + escHtml(failed.join(', ')) + '</span>';
+    fb.innerHTML = html;
+  } catch { fb.textContent = '\\u2717 Request failed'; }
 }
 
 // ── Custom titles ──────────────────────────────────────────────────
