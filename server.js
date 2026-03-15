@@ -879,6 +879,24 @@ function connectChatReader() {
       // PART
       const partMatch = line.match(/^:(\w+)!\S+ PART #\S+$/);
       if (partMatch) { chatters.delete(partMatch[1].toLowerCase()); continue; }
+      // USERNOTICE — handle Shared Chat raid (sharedchatnotice with source-msg-id=raid)
+      const usernoticeMatch = line.match(/^@(\S+) :tmi\.twitch\.tv USERNOTICE #\S+/);
+      if (usernoticeMatch) {
+        const tags = usernoticeMatch[1];
+        const getMsgTag = (t, name) => { const m = t.match(new RegExp('(?:^|;)' + name + '=([^;]*)')); return m ? m[1].replace(/\\s/g, ' ') : ''; };
+        const msgId       = getMsgTag(tags, 'msg-id');
+        const srcMsgId    = getMsgTag(tags, 'source-msg-id');
+        if (msgId === 'sharedchatnotice' && srcMsgId === 'raid') {
+          const raiderName = getMsgTag(tags, 'msg-param-displayName') || getMsgTag(tags, 'display-name') || 'unknown';
+          const viewers    = parseInt(getMsgTag(tags, 'msg-param-viewerCount'), 10) || 0;
+          const raidAlert  = { type: 'raid', user: raiderName, viewers };
+          console.log('Shared Chat raid:', raidAlert);
+          broadcast(raidAlert);
+          broadcastChatEvent(raidAlert);
+          handleEventToasterReaction('raid', raiderName, raidAlert).catch(() => {});
+        }
+        continue;
+      }
       // Debug: log any line containing PRIVMSG, USERNOTICE, NOTICE, HOSTTARGET, WHISPER that we don't handle
       if (/PRIVMSG|USERNOTICE|NOTICE|WHISPER/.test(line) && !line.match(/^@(\S+) :(\w+)!\S+ PRIVMSG #\S+ :(.*)$/)) {
         console.log('IRC unhandled:', line);
@@ -1180,50 +1198,6 @@ async function setupSubscriptions() {
   } catch (err) {
     console.error('Subscription setup failed:', err.message);
   }
-  // Connect PubSub after broadcasterId is known
-  connectPubSub();
-}
-
-let pubSubWs = null;
-let pubSubPingTimer = null;
-
-function connectPubSub() {
-  if (!broadcasterId) return;
-  const token = loadTokens()?.access_token;
-  if (!token) return;
-
-  if (pubSubWs) { pubSubWs.removeAllListeners(); pubSubWs.terminate(); }
-  clearInterval(pubSubPingTimer);
-
-  console.log('Connecting to Twitch PubSub...');
-  pubSubWs = new WebSocket('wss://pubsub-edge.twitch.tv/v1');
-
-  pubSubWs.on('open', () => {
-    console.log('PubSub connected');
-    const topics = [
-      `channel-bits-events-v2.${broadcasterId}`,
-      `channel-bits-badge-unlock.${broadcasterId}`,
-    ];
-    pubSubWs.send(JSON.stringify({ type: 'LISTEN', data: { topics, auth_token: token } }));
-    pubSubPingTimer = setInterval(() => {
-      if (pubSubWs?.readyState === 1) pubSubWs.send(JSON.stringify({ type: 'PING' }));
-    }, 4 * 60 * 1000);
-  });
-
-  pubSubWs.on('message', (raw) => {
-    const msg = JSON.parse(raw.toString());
-    if (msg.type === 'PONG') return;
-    if (msg.type === 'RECONNECT') { connectPubSub(); return; }
-    console.log('PubSub message:', JSON.stringify(msg));
-  });
-
-  pubSubWs.on('close', (code) => {
-    console.log(`PubSub closed (${code}), reconnecting in 10s...`);
-    clearInterval(pubSubPingTimer);
-    setTimeout(connectPubSub, 10000);
-  });
-
-  pubSubWs.on('error', (err) => console.error('PubSub error:', err.message));
 }
 
 function formatAutoReward(type) {
